@@ -1,7 +1,7 @@
 {
   "name": "fullstack-task-manager-charusat-24cs095",
   "version": "1.0.0",
-  "description": "Practical 6: Full Stack Integration React + Node + MongoDB - CHARUSAT ITUE301",
+  "description": "Practical 7: Authentication and Middleware Pipeline - CHARUSAT ITUE301",
   "author": "Ansh Sojitra (24CS095)",
   "license": "ISC",
   "scripts": {

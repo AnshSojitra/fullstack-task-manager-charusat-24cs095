@@ -12,7 +12,18 @@ const errorHandler = (err, req, res, next) => {
   // Log server-side diagnostic error
   console.error(`[Server Error] ${err.name || "Error"}: ${err.message}`);
 
-  // 1. Mongoose Validation Error (e.g., missing title, invalid priority enum)
+  // 1. MongoDB Duplicate Key Error (e.g. duplicate email on registration)
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue || {})[0] || "field";
+    const capitalized = field.charAt(0).toUpperCase() + field.slice(1);
+    return res.status(400).json({
+      success: false,
+      message: `${capitalized} is already registered.`,
+      errors: [`${capitalized} must be unique.`],
+    });
+  }
+
+  // 2. Mongoose Validation Error (e.g., missing title, invalid priority enum)
   if (err.name === "ValidationError") {
     const messages = Object.values(err.errors).map((e) => e.message);
     return res.status(400).json({

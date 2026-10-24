@@ -49,6 +49,12 @@ const taskSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: [true, "Task must belong to an authenticated user."],
+      index: true,
+    },
   },
   {
     versionKey: false,

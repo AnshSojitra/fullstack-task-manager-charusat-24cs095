@@ -1,19 +1,24 @@
 const express = require("express");
 const router = express.Router();
 const Task = require("../models/Task");
+const auth = require("../middleware/auth");
 const validateTaskId = require("../middleware/validateTaskId");
+
+// Require JWT authentication for all task operations
+router.use(auth);
 
 // Apply MongoDB ObjectId validation middleware to all routes containing :id parameter
 router.use("/:id", validateTaskId);
 
 /**
  * GET /tasks
- * Retrieve all tasks from MongoDB, ordered newest first.
+ * Retrieve all tasks belonging strictly to the authenticated user, ordered newest first.
+ * Prevents unauthorized users from seeing other users' tasks.
  * Status: 200 OK
  */
 router.get("/", async (req, res, next) => {
   try {
-    const tasks = await Task.find().sort({ createdAt: -1 });
+    const tasks = await Task.find({ user: req.user._id }).sort({ createdAt: -1 });
     res.status(200).json({
       success: true,
       count: tasks.length,
@@ -26,12 +31,13 @@ router.get("/", async (req, res, next) => {
 
 /**
  * GET /tasks/:id
- * Retrieve a single task by its MongoDB ObjectId.
- * Status: 200 OK, 400 Bad Request (malformed ID handled by middleware), or 404 Not Found (valid ID not in DB)
+ * Retrieve a single task by its MongoDB ObjectId, scoped to authenticated user.
+ * Returns 404 if task does not exist or belongs to another user (prevents enumeration).
+ * Status: 200 OK or 404 Not Found
  */
 router.get("/:id", async (req, res, next) => {
   try {
-    const task = await Task.findById(req.params.id);
+    const task = await Task.findOne({ _id: req.params.id, user: req.user._id });
 
     if (!task) {
       return res.status(404).json({
@@ -51,20 +57,21 @@ router.get("/:id", async (req, res, next) => {
 
 /**
  * POST /tasks
- * Create a new task document in MongoDB.
- * Body: { title (required), description (optional), completed (optional), priority (optional: 'low'|'medium'|'high') }
- * Status: 201 Created or 400 Bad Request (schema validation error forwarded to errorHandler)
+ * Create a new task document associated with req.user._id.
+ * Body: { title (required), description (optional), completed (optional), priority (optional) }
+ * Status: 201 Created or 400 Bad Request
  */
 router.post("/", async (req, res, next) => {
   try {
     const { title, description, completed, priority } = req.body;
 
-    // Instantiate and save document to trigger Mongoose schema validation & pre-save hooks
+    // Instantiate task document scoped to the authenticated user
     const newTask = new Task({
       title,
       description,
       completed,
       priority,
+      user: req.user._id,
     });
 
     const savedTask = await newTask.save();
@@ -81,9 +88,9 @@ router.post("/", async (req, res, next) => {
 
 /**
  * PUT /tasks/:id
- * Update an existing task in MongoDB by its ObjectId.
+ * Update an existing task belonging to the authenticated user.
  * Body: { title?, description?, completed?, priority? }
- * Status: 200 OK, 400 Bad Request (validation failure), or 404 Not Found
+ * Status: 200 OK, 400 Bad Request, or 404 Not Found
  */
 router.put("/:id", async (req, res, next) => {
   try {
@@ -108,9 +115,9 @@ router.put("/:id", async (req, res, next) => {
     if (completed !== undefined) updatePayload.completed = Boolean(completed);
     if (priority !== undefined) updatePayload.priority = priority;
 
-    // Update with runValidators: true to enforce Mongoose schema enum and required constraints
-    const updatedTask = await Task.findByIdAndUpdate(
-      req.params.id,
+    // Update only if task belongs to req.user._id
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id },
       updatePayload,
       { returnDocument: "after", runValidators: true, context: "query" }
     );
@@ -134,12 +141,16 @@ router.put("/:id", async (req, res, next) => {
 
 /**
  * DELETE /tasks/:id
- * Delete a task from MongoDB by its ObjectId.
+ * Delete a task document belonging to the authenticated user.
+ * Prevents users from deleting other users' tasks.
  * Status: 200 OK or 404 Not Found
  */
 router.delete("/:id", async (req, res, next) => {
   try {
-    const deletedTask = await Task.findByIdAndDelete(req.params.id);
+    const deletedTask = await Task.findOneAndDelete({
+      _id: req.params.id,
+      user: req.user._id,
+    });
 
     if (!deletedTask) {
       return res.status(404).json({

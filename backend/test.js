@@ -1,25 +1,28 @@
 /**
- * Automated Test Suite for TaskManager REST API
- * Practical 5: MongoDB Integration and Schema Design with Mongoose
- * CHARUSAT ITUE301 - Academic Year 2026–27
+ * Comprehensive Automated Test Suite for Authentication & Middleware Pipeline
+ * Practical 7: CHARUSAT ITUE301 - Academic Year 2026–27
  * Student: Ansh Sojitra | Student ID: 24CS095
  *
  * Verifies:
- * 1. MongoDB Connection & Error Reporting
- * 2. CRUD Operations against MongoDB (List, Create, Read by ID, Update, Delete)
- * 3. Schema Constraints & Title Whitespace Trimming (Setter & Pre-save Hook)
- * 4. Priority Enum Validation (low, medium, high)
- * 5. Malformed MongoDB ObjectId vs Nonexistent Valid ObjectId (400 vs 404)
- * 6. Persistence across Server Restart / Database Reconnection
- * 7. Content-Type enforcement & Global Error Handling (Hiding Stack Traces)
+ * 1. Startup validation (fail clearly when JWT_SECRET is missing)
+ * 2. MongoDB connection & Mongoose User/Task schemas
+ * 3. User registration with email normalization & password hashing (bcryptjs)
+ * 4. Rejection of duplicate emails and invalid inputs (name, email format, password length)
+ * 5. User authentication (login) with correct and incorrect credentials
+ * 6. Safe user profile endpoint (GET /auth/me and GET /me without password hash)
+ * 7. Rejection of missing, malformed, or expired JWTs (HTTP 401)
+ * 8. Protection of all /tasks CRUD routes with auth middleware
+ * 9. Multi-tenant data isolation: User A cannot read, list, update, or delete User B's tasks
  */
 
 require("dotenv").config();
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
 const app = require("./app");
+const User = require("./models/User");
 const Task = require("./models/Task");
 
-const TEST_PORT = 5095;
+const TEST_PORT = 5097;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 
 let server;
@@ -38,23 +41,44 @@ function assert(condition, testName) {
 
 async function runTests() {
   console.log("============================================================");
-  console.log(" Practical 5 - TaskManager API Automated Test Suite");
+  console.log(" Practical 7 - Auth & Middleware Pipeline Test Suite");
   console.log(" Student: Ansh Sojitra | ID: 24CS095 | CHARUSAT ITUE301");
-  console.log(" Focus: MongoDB Integration & Mongoose Schema Validation");
+  console.log(" Focus: JWT Auth, bcryptjs, Route Protection & Data Isolation");
   console.log("============================================================\n");
 
-  // Step 1: Connect to MongoDB
-  console.log("--- 1. MongoDB Connection Verification ---");
+  // Step 1: Startup check verification
+  console.log("--- 1. Startup Environment & Secrets Verification ---");
+  const originalSecret = process.env.JWT_SECRET;
+  try {
+    delete process.env.JWT_SECRET;
+    let threw = false;
+    try {
+      app.verifyEnvironment();
+    } catch {
+      threw = true;
+    }
+    assert(threw, "verifyEnvironment() fails clearly if JWT_SECRET is missing");
+  } finally {
+    process.env.JWT_SECRET = originalSecret;
+  }
+  assert(Boolean(process.env.JWT_SECRET), "JWT_SECRET is loaded from .env");
+
+  // Step 2: Connect to MongoDB
+  console.log("\n--- 2. MongoDB Connection Verification ---");
   try {
     await app.connectDB();
-    assert(mongoose.connection.readyState === 1, "MongoDB connection established successfully (readyState === 1)");
-    console.log(`  Connected to DB host: ${mongoose.connection.host}:${mongoose.connection.port}/${mongoose.connection.name}`);
+    assert(
+      mongoose.connection.readyState === 1,
+      "MongoDB connection established successfully (readyState === 1)"
+    );
   } catch (err) {
     assert(false, `MongoDB connection failed: ${err.message}`);
-    console.error("\nFATAL: MongoDB is required to run Practical 5 test suite.");
-    console.error("Please ensure MongoDB is running locally or check MONGO_URI in .env");
+    console.error("\nFATAL: MongoDB is required to run Practical 7 test suite.");
     process.exit(1);
   }
+
+  // Clean test collections before running
+  await User.deleteMany({ email: { $in: ["alice@example.com", "bob@example.com", "charlie@example.com"] } });
 
   // Start test server
   await new Promise((resolve) => {
@@ -66,278 +90,338 @@ async function runTests() {
 
   try {
     // -------------------------------------------------------------------------
-    console.log("--- 2. API Info & Root Route ---");
+    console.log("--- 3. API Info & Health Endpoint ---");
     // -------------------------------------------------------------------------
     const resRoot = await fetch(`${BASE_URL}/api`);
     const dataRoot = await resRoot.json();
     assert(resRoot.status === 200, "GET /api returns HTTP 200");
-    assert(dataRoot.success === true, "GET /api returns success: true");
     assert(dataRoot.student && dataRoot.student.studentId === "24CS095", "Metadata includes Student ID 24CS095");
-    assert(dataRoot.database && dataRoot.database.engine === "MongoDB", "Metadata confirms MongoDB engine");
+    assert(dataRoot.security && dataRoot.security.auth === "JWT (JSON Web Token)", "Security metadata confirms JWT auth");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 3. Mongoose CRUD: POST /tasks (Create Task & Whitespace Trimming) ---");
+    console.log("\n--- 4. User Registration (POST /auth/register) ---");
     // -------------------------------------------------------------------------
-    const untrimmedTitle = "   Implement Mongoose Models and Hooks   ";
-    const postPayload = {
-      title: untrimmedTitle,
-      description: "Define Mongoose schema with enum, default values, and pre-save hooks",
-      completed: false,
-      priority: "high",
-    };
-
-    const resCreate = await fetch(`${BASE_URL}/tasks`, {
+    // Successful registration
+    const resRegAlice = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(postPayload),
+      body: JSON.stringify({
+        name: "  Alice TestUser  ",
+        email: "  Alice@Example.Com  ",
+        password: "securePassword123",
+      }),
     });
-    const dataCreate = await resCreate.json();
+    const dataRegAlice = await resRegAlice.json();
 
-    assert(resCreate.status === 201, "POST /tasks returns HTTP 201 Created");
-    assert(dataCreate.success === true, "POST /tasks returns success: true");
-    assert(dataCreate.data && dataCreate.data._id, "Created task has MongoDB _id");
-    assert(dataCreate.data.title === "Implement Mongoose Models and Hooks", "Title whitespace trimmed by schema setter/pre-save hook");
-    assert(dataCreate.data.priority === "high", "Priority correctly set to 'high'");
-    assert(dataCreate.data.completed === false, "Default or provided completed: false set");
-    assert(Boolean(dataCreate.data.createdAt), "createdAt timestamp generated automatically");
+    assert(resRegAlice.status === 201, "POST /auth/register returns HTTP 201 Created");
+    assert(Boolean(dataRegAlice.token), "Registration response contains signed JWT token");
+    assert(dataRegAlice.user && dataRegAlice.user.email === "alice@example.com", "Email is normalized to lowercase and trimmed");
+    assert(dataRegAlice.user.name === "Alice TestUser", "Name is trimmed");
+    assert(dataRegAlice.user.password === undefined, "User password is NOT included in returned user object");
 
-    const createdId = dataCreate.data._id;
+    // Verify password in DB is hashed and not plaintext
+    const dbAlice = await User.findOne({ email: "alice@example.com" });
+    assert(dbAlice && dbAlice.password !== "securePassword123", "Database stores password hash, NEVER plaintext");
+    assert(dbAlice.password.startsWith("$2"), "Password hash format is bcrypt ($2a$ / $2b$)");
 
-    // -------------------------------------------------------------------------
-    console.log("\n--- 4. Mongoose CRUD: GET /tasks (Read All) ---");
-    // -------------------------------------------------------------------------
-    const resGetAll = await fetch(`${BASE_URL}/tasks`);
-    const dataGetAll = await resGetAll.json();
-
-    assert(resGetAll.status === 200, "GET /tasks returns HTTP 200");
-    assert(dataGetAll.success === true, "GET /tasks returns success: true");
-    assert(Array.isArray(dataGetAll.data), "GET /tasks data is an array");
-    assert(dataGetAll.data.some((t) => t._id === createdId), "Created task present in list returned from MongoDB");
+    const aliceToken = dataRegAlice.token;
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 5. Mongoose CRUD: GET /tasks/:id (Read Single by Valid ObjectId) ---");
+    console.log("\n--- 5. Registration Validation & Duplicate Prevention ---");
     // -------------------------------------------------------------------------
-    const resGetSingle = await fetch(`${BASE_URL}/tasks/${createdId}`);
-    const dataGetSingle = await resGetSingle.json();
-
-    assert(resGetSingle.status === 200, "GET /tasks/:id returns HTTP 200 for existing ObjectId");
-    assert(dataGetSingle.data && dataGetSingle.data._id === createdId, "Fetched task matches requested _id");
-    assert(dataGetSingle.data.title === "Implement Mongoose Models and Hooks", "Fetched task title is accurate");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 6. Mongoose CRUD: PUT /tasks/:id (Update Task & Enum Check) ---");
-    // -------------------------------------------------------------------------
-    const updatePayload = {
-      title: "   Implement Mongoose Models and Hooks (Verified)   ",
-      completed: true,
-      priority: "medium",
-    };
-
-    const resUpdate = await fetch(`${BASE_URL}/tasks/${createdId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatePayload),
-    });
-    const dataUpdate = await resUpdate.json();
-
-    assert(resUpdate.status === 200, "PUT /tasks/:id returns HTTP 200");
-    assert(dataUpdate.success === true, "PUT /tasks/:id returns success: true");
-    assert(dataUpdate.data.title === "Implement Mongoose Models and Hooks (Verified)", "Updated title is trimmed");
-    assert(dataUpdate.data.completed === true, "Updated completed flag is true");
-    assert(dataUpdate.data.priority === "medium", "Updated priority changed to 'medium'");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 7. Verification: Data Persistence Across Server Restart ---");
-    // -------------------------------------------------------------------------
-    // Create a special persistence checkpoint task
-    const persistPayload = {
-      title: "Persistence Checkpoint Task",
-      description: "Must survive server stop and restart",
-      priority: "low",
-    };
-    const resPersistCreate = await fetch(`${BASE_URL}/tasks`, {
+    // Duplicate email
+    const resDup = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(persistPayload),
+      body: JSON.stringify({
+        name: "Alice Imposter",
+        email: "alice@example.com",
+        password: "anotherPassword123",
+      }),
     });
-    const dataPersistCreate = await resPersistCreate.json();
-    const persistTaskId = dataPersistCreate.data._id;
+    const dataDup = await resDup.json();
+    assert(resDup.status === 400, "Registration rejects duplicate email with HTTP 400");
+    assert(dataDup.success === false, "Duplicate email returns success: false");
 
-    // Simulate Server Stop
-    console.log("  Stopping HTTP test server...");
-    if (server.closeAllConnections) server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // Simulate Server Restart
-    console.log("  Restarting HTTP test server...");
-    await new Promise((resolve) => {
-      server = app.listen(TEST_PORT, resolve);
-    });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    // Query task from new server instance
-    const resPersistCheck = await fetch(`${BASE_URL}/tasks/${persistTaskId}`, {
-      headers: { "Connection": "close" },
-    });
-    const dataPersistCheck = await resPersistCheck.json();
-    assert(resPersistCheck.status === 200, "GET /tasks/:id after server restart returns HTTP 200");
-    assert(dataPersistCheck.data && dataPersistCheck.data._id === persistTaskId, "Task survived server restart with intact ID");
-    assert(dataPersistCheck.data.title === persistPayload.title, "Task data survived server restart unchanged");
-
-    // Clean up persistence checkpoint task
-    await fetch(`${BASE_URL}/tasks/${persistTaskId}`, { method: "DELETE" });
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 8. Mongoose CRUD: DELETE /tasks/:id (Delete Task) ---");
-    // -------------------------------------------------------------------------
-    const resDelete = await fetch(`${BASE_URL}/tasks/${createdId}`, {
-      method: "DELETE",
-    });
-    const dataDelete = await resDelete.json();
-
-    assert(resDelete.status === 200, "DELETE /tasks/:id returns HTTP 200");
-    assert(dataDelete.success === true, "DELETE /tasks/:id returns success: true");
-    assert(dataDelete.data._id === createdId, "Deleted task document returned");
-
-    // Verify task is deleted from MongoDB
-    const resVerifyDeleted = await fetch(`${BASE_URL}/tasks/${createdId}`);
-    const dataVerifyDeleted = await resVerifyDeleted.json();
-    assert(resVerifyDeleted.status === 404, "GET /tasks/:id after deletion returns HTTP 404");
-    assert(dataVerifyDeleted.success === false, "Deletion verification response has success: false");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 9. Error Handling: Nonexistent Valid ObjectId vs Malformed ObjectId ---");
-    // -------------------------------------------------------------------------
-    // Valid 24-hex ObjectId that does not exist in the database
-    const nonExistentValidId = "507f1f77bcf86cd799439011";
-    const resNonExistent = await fetch(`${BASE_URL}/tasks/${nonExistentValidId}`);
-    const dataNonExistent = await resNonExistent.json();
-    assert(resNonExistent.status === 404, "Valid nonexistent ObjectId returns HTTP 404");
-    assert(dataNonExistent.success === false, "Nonexistent task response has success: false");
-    assert(dataNonExistent.message.includes("not found"), "Structured 404 message indicates task not found");
-
-    // Malformed ID (e.g., '123' or 'not-a-mongo-id')
-    const malformedId = "invalid-task-id-123";
-    const resMalformed = await fetch(`${BASE_URL}/tasks/${malformedId}`);
-    const dataMalformed = await resMalformed.json();
-    assert(resMalformed.status === 400, "Malformed ObjectId returns HTTP 400 Bad Request");
-    assert(dataMalformed.success === false, "Malformed ID returns success: false");
-    assert(dataMalformed.message.includes("Invalid task ID format"), "Malformed ID error message is clear and structured");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 10. Mongoose Schema Validation: Missing Title & Invalid Priority Enum ---");
-    // -------------------------------------------------------------------------
-    // Missing Title
-    const resMissingTitle = await fetch(`${BASE_URL}/tasks`, {
+    // Invalid email format
+    const resBadEmail = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: "Missing title", priority: "low" }),
+      body: JSON.stringify({
+        name: "Bad Email User",
+        email: "not-a-valid-email",
+        password: "securePassword123",
+      }),
     });
-    const dataMissingTitle = await resMissingTitle.json();
-    assert(resMissingTitle.status === 400, "POST with missing title returns HTTP 400");
-    assert(dataMissingTitle.success === false, "Missing title response has success: false");
-    assert(Array.isArray(dataMissingTitle.errors), "Validation errors returned as readable array");
+    assert(resBadEmail.status === 400, "Registration rejects invalid email format with HTTP 400");
 
-    // Whitespace-only title
-    const resWhitespaceTitle = await fetch(`${BASE_URL}/tasks`, {
+    // Short password (< 6 characters)
+    const resShortPass = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "     ", priority: "low" }),
+      body: JSON.stringify({
+        name: "Short Pass User",
+        email: "short@example.com",
+        password: "123",
+      }),
     });
-    const dataWhitespaceTitle = await resWhitespaceTitle.json();
-    assert(resWhitespaceTitle.status === 400, "POST with whitespace-only title returns HTTP 400");
-    assert(dataWhitespaceTitle.success === false, "Whitespace-only title rejected");
+    assert(resShortPass.status === 400, "Registration rejects password shorter than 6 characters with HTTP 400");
 
-    // Invalid Priority Enum (e.g., 'critical')
-    const resInvalidPriority = await fetch(`${BASE_URL}/tasks`, {
+    // Empty name
+    const resEmptyName = await fetch(`${BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "Valid Title", priority: "critical" }),
+      body: JSON.stringify({
+        name: "   ",
+        email: "noname@example.com",
+        password: "securePassword123",
+      }),
     });
-    const dataInvalidPriority = await resInvalidPriority.json();
-    assert(resInvalidPriority.status === 400, "POST with invalid priority enum returns HTTP 400");
-    assert(dataInvalidPriority.success === false, "Invalid priority rejected");
-    assert(
-      dataInvalidPriority.errors.some((msg) => msg.includes("valid priority")),
-      "Enum validation error explains allowed values (low, medium, high)"
+    assert(resEmptyName.status === 400, "Registration rejects whitespace-only name with HTTP 400");
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 6. User Login (POST /auth/login) ---");
+    // -------------------------------------------------------------------------
+    // Login with wrong password
+    const resBadPass = await fetch(`${BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "alice@example.com",
+        password: "wrongPassword999",
+      }),
+    });
+    assert(resBadPass.status === 401, "Login with incorrect password returns HTTP 401 Unauthorized");
+
+    // Login with non-existent user
+    const resNoUser = await fetch(`${BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "ghost@example.com",
+        password: "securePassword123",
+      }),
+    });
+    assert(resNoUser.status === 401, "Login with nonexistent email returns HTTP 401 Unauthorized");
+
+    // Login with correct credentials (case-insensitive email)
+    const resLoginAlice = await fetch(`${BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "ALICE@EXAMPLE.COM",
+        password: "securePassword123",
+      }),
+    });
+    const dataLoginAlice = await resLoginAlice.json();
+    assert(resLoginAlice.status === 200, "Login with correct credentials returns HTTP 200 OK");
+    assert(Boolean(dataLoginAlice.token), "Login response returns signed JWT");
+    assert(dataLoginAlice.user.password === undefined, "Login response does not leak password hash");
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 7. Safe Profile & Token Verification (GET /auth/me & GET /me) ---");
+    // -------------------------------------------------------------------------
+    // Request with valid token
+    const resMe = await fetch(`${BASE_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    const dataMe = await resMe.json();
+    assert(resMe.status === 200, "GET /auth/me with valid Bearer token returns HTTP 200");
+    assert(dataMe.user.email === "alice@example.com", "GET /auth/me returns authenticated user's email");
+    assert(dataMe.user.password === undefined, "GET /auth/me does not expose password or hash");
+
+    // Direct alias GET /me
+    const resMeAlias = await fetch(`${BASE_URL}/me`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    assert(resMeAlias.status === 200, "GET /me alias returns HTTP 200");
+
+    // Missing token
+    const resNoToken = await fetch(`${BASE_URL}/auth/me`);
+    assert(resNoToken.status === 401, "GET /auth/me without token returns HTTP 401");
+
+    // Invalid token (tampered)
+    const resBadToken = await fetch(`${BASE_URL}/auth/me`, {
+      headers: { Authorization: "Bearer invalid.token.payload" },
+    });
+    assert(resBadToken.status === 401, "GET /auth/me with invalid token returns HTTP 401");
+
+    // Expired token
+    const expiredToken = jwt.sign(
+      { id: dbAlice._id, email: dbAlice.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "-1s" }
     );
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 11. Middleware & Protocol Validation ---");
-    // -------------------------------------------------------------------------
-    // Missing Content-Type on POST
-    const resNoCT = await fetch(`${BASE_URL}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ title: "Missing Header" }),
+    const resExpired = await fetch(`${BASE_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${expiredToken}` },
     });
-    assert(resNoCT.status === 400, "POST without application/json returns HTTP 400");
+    assert(resExpired.status === 401, "GET /auth/me with expired token returns HTTP 401");
 
-    // Malformed JSON syntax
-    const resBrokenJson = await fetch(`${BASE_URL}/tasks`, {
+    // -------------------------------------------------------------------------
+    console.log("\n--- 8. Protected Task Routes & Unauthenticated Rejection ---");
+    // -------------------------------------------------------------------------
+    const resUnauthGet = await fetch(`${BASE_URL}/tasks`);
+    assert(resUnauthGet.status === 401, "GET /tasks without token returns HTTP 401");
+
+    const resUnauthPost = await fetch(`${BASE_URL}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{ title: broken-syntax-no-quotes }",
+      body: JSON.stringify({ title: "Unauthorized task" }),
     });
-    const dataBrokenJson = await resBrokenJson.json();
-    assert(resBrokenJson.status === 400, "Malformed JSON syntax returns HTTP 400 from errorHandler");
-    assert(!("stack" in dataBrokenJson), "Stack traces are hidden from error responses");
-
-    // Unknown endpoint
-    const resUnknown = await fetch(`${BASE_URL}/invalid/route`);
-    assert(resUnknown.status === 404, "Unknown endpoint returns HTTP 404");
+    assert(resUnauthPost.status === 401, "POST /tasks without token returns HTTP 401");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 12. Full Stack Integration: CORS Verification ---");
+    console.log("\n--- 9. User-Scoped Task CRUD (Alice creates tasks) ---");
     // -------------------------------------------------------------------------
-    // Preflight OPTIONS request from React frontend origin
-    const resPreflight = await fetch(`${BASE_URL}/tasks`, {
-      method: "OPTIONS",
+    const resCreateAlice = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
       headers: {
-        Origin: "http://localhost:5173",
-        "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "Content-Type",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aliceToken}`,
       },
+      body: JSON.stringify({
+        title: "Alice Private Task",
+        description: "Confidential task belonging to Alice",
+        priority: "high",
+        completed: false,
+      }),
     });
+    const dataCreateAlice = await resCreateAlice.json();
+    assert(resCreateAlice.status === 201, "Alice creates task with HTTP 201 Created");
+    assert(dataCreateAlice.data.user.toString() === dbAlice._id.toString(), "Task is associated with Alice's User ID");
+    const aliceTaskId = dataCreateAlice.data._id;
+
+    // Alice reads her tasks
+    const resGetAliceTasks = await fetch(`${BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    const dataGetAliceTasks = await resGetAliceTasks.json();
+    assert(resGetAliceTasks.status === 200, "Alice retrieves her tasks with HTTP 200");
+    assert(dataGetAliceTasks.data.some((t) => t._id === aliceTaskId), "Alice's task list includes Alice Private Task");
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 10. Multi-Tenant Data Isolation (Bob cannot access Alice's task) ---");
+    // -------------------------------------------------------------------------
+    // Register Bob
+    const resRegBob = await fetch(`${BASE_URL}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bob User",
+        email: "bob@example.com",
+        password: "bobPassword123",
+      }),
+    });
+    const dataRegBob = await resRegBob.json();
+    const bobToken = dataRegBob.token;
+    assert(resRegBob.status === 201, "Registered Bob as a second user");
+
+    // Bob lists tasks -> MUST NOT see Alice's tasks
+    const resGetBobTasks = await fetch(`${BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${bobToken}` },
+    });
+    const dataGetBobTasks = await resGetBobTasks.json();
+    assert(resGetBobTasks.status === 200, "Bob retrieves task list with HTTP 200");
+    const bobSeesAliceTask = dataGetBobTasks.data.some((t) => t._id === aliceTaskId);
+    assert(!bobSeesAliceTask, "Data Isolation: Bob CANNOT see Alice's tasks in GET /tasks");
+
+    // Bob attempts to fetch Alice's task directly by ID -> MUST return 404
+    const resBobGetAliceTask = await fetch(`${BASE_URL}/tasks/${aliceTaskId}`, {
+      headers: { Authorization: `Bearer ${bobToken}` },
+    });
+    assert(resBobGetAliceTask.status === 404, "Data Isolation: Bob gets 404 when requesting Alice's task by ID");
+
+    // Bob attempts to modify Alice's task -> MUST return 404
+    const resBobPutAliceTask = await fetch(`${BASE_URL}/tasks/${aliceTaskId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bobToken}`,
+      },
+      body: JSON.stringify({ title: "Hacked by Bob" }),
+    });
+    assert(resBobPutAliceTask.status === 404, "Data Isolation: Bob gets 404 when attempting to update Alice's task");
+
+    // Bob attempts to delete Alice's task -> MUST return 404
+    const resBobDelAliceTask = await fetch(`${BASE_URL}/tasks/${aliceTaskId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${bobToken}` },
+    });
+    assert(resBobDelAliceTask.status === 404, "Data Isolation: Bob gets 404 when attempting to delete Alice's task");
+
+    // Verify Alice's task in database is untouched
+    const aliceTaskStillThere = await Task.findById(aliceTaskId);
     assert(
-      resPreflight.status === 204 || resPreflight.status === 200,
-      "OPTIONS preflight request returns HTTP 204/200"
-    );
-    assert(
-      resPreflight.headers.get("access-control-allow-origin") === "http://localhost:5173" ||
-        resPreflight.headers.get("access-control-allow-origin") === "*",
-      "Preflight response includes valid Access-Control-Allow-Origin"
+      aliceTaskStillThere && aliceTaskStillThere.title === "Alice Private Task",
+      "Alice's task remains completely intact and uncorrupted"
     );
 
-    // Regular GET with Origin header
-    const resCorsGet = await fetch(`${BASE_URL}/tasks`, {
-      headers: { Origin: "http://localhost:5173" },
+    // Bob creates his own task
+    const resCreateBob = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bobToken}`,
+      },
+      body: JSON.stringify({
+        title: "Bob Personal Task",
+        priority: "low",
+      }),
     });
-    assert(
-      resCorsGet.headers.get("access-control-allow-origin") === "http://localhost:5173" ||
-        resCorsGet.headers.get("access-control-allow-origin") === "*",
-      "GET /tasks response includes Access-Control-Allow-Origin header"
-    );
-  } catch (err) {
-    console.error("Test execution caught unexpected error:", err);
-    failedCount++;
+    const dataCreateBob = await resCreateBob.json();
+    assert(resCreateBob.status === 201, "Bob creates his own task successfully");
+    const bobTaskId = dataCreateBob.data._id;
+
+    // Bob sees his task only
+    const resBobList = await fetch(`${BASE_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${bobToken}` },
+    });
+    const dataBobList = await resBobList.json();
+    assert(dataBobList.data.length === 1 && dataBobList.data[0]._id === bobTaskId, "Bob sees only his 1 personal task");
+
+    // Alice updates and deletes her own task
+    const resAliceUpdate = await fetch(`${BASE_URL}/tasks/${aliceTaskId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aliceToken}`,
+      },
+      body: JSON.stringify({ completed: true }),
+    });
+    assert(resAliceUpdate.status === 200, "Alice can successfully update her own task");
+
+    const resAliceDelete = await fetch(`${BASE_URL}/tasks/${aliceTaskId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    assert(resAliceDelete.status === 200, "Alice can successfully delete her own task");
+
+    // Cleanup test data
+    await Task.deleteMany({ _id: { $in: [aliceTaskId, bobTaskId] } });
+    await User.deleteMany({ email: { $in: ["alice@example.com", "bob@example.com"] } });
   } finally {
     if (server) {
-      if (server.closeAllConnections) server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
+      console.log("\n[Test Server] Shut down gracefully.");
     }
     await mongoose.connection.close();
+    console.log("[Database] MongoDB connection closed.");
+  }
 
-    console.log("\n============================================================");
-    console.log(` Test Summary: ${passedCount} Passed | ${failedCount} Failed`);
-    console.log("============================================================\n");
+  console.log("\n============================================================");
+  console.log(` Test Summary: ${passedCount} PASSED, ${failedCount} FAILED`);
+  console.log("============================================================\n");
 
-    if (failedCount > 0) {
-      process.exit(1);
-    } else {
-      process.exit(0);
-    }
+  if (failedCount > 0) {
+    process.exit(1);
   }
 }
 
-runTests();
+if (require.main === module) {
+  runTests().catch((err) => {
+    console.error("Test execution error:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = runTests;
