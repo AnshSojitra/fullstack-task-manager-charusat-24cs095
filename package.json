@@ -1,0 +1,16 @@
+{
+  "name": "fullstack-task-manager-charusat-24cs095",
+  "version": "1.0.0",
+  "description": "Practical 6: Full Stack Integration React + Node + MongoDB - CHARUSAT ITUE301",
+  "author": "Ansh Sojitra (24CS095)",
+  "license": "ISC",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start:backend": "npm --prefix backend start",
+    "test:backend": "npm --prefix backend test",
+    "build:frontend": "npm --prefix frontend run build",
+    "lint:frontend": "npm --prefix frontend run lint",
+    "test": "npm --prefix backend test"
+  }
+}
