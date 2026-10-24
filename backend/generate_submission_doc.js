@@ -8,538 +8,498 @@ const {
   Table,
   TableRow,
   TableCell,
-  HeadingLevel,
+  Header,
+  Footer,
+  PageNumber,
   AlignmentType,
   WidthType,
   BorderStyle,
-  ShadingType,
+  ImageRun,
 } = require("docx");
 
-const PRIMARY_COLOR = "1E3A8A"; // Deep Blue
-const SECONDARY_COLOR = "3B82F6"; // Accent Blue
-const DARK_TEXT = "1E293B"; // Slate 800
-const MUTED_TEXT = "64748B"; // Slate 500
-const LIGHT_BG = "F8FAFC"; // Light Gray
-const BORDER_COLOR = "CBD5E1"; // Gray border
-const SUCCESS_COLOR = "10B981"; // Green
+const FIGURES_DIR = path.join(__dirname, "figures");
 
-function createHeading(text, level = HeadingLevel.HEADING_1) {
-  const isH1 = level === HeadingLevel.HEADING_1;
-  const isH2 = level === HeadingLevel.HEADING_2;
-  const isH3 = level === HeadingLevel.HEADING_3;
+const BORDER_BLACK = { style: BorderStyle.SINGLE, size: 6, color: "000000" };
+const BORDER_NONE = { style: BorderStyle.NONE, size: 0, color: "auto" };
+const BORDER_MAROON = { style: BorderStyle.SINGLE, size: 12, color: "7F1D1D" };
 
-  return new Paragraph({
-    heading: level,
-    spacing: { before: isH1 ? 280 : isH2 ? 220 : 160, after: 100 },
-    children: [
-      new TextRun({
-        text,
-        bold: true,
-        size: isH1 ? 32 : isH2 ? 26 : 22,
-        color: isH1 ? PRIMARY_COLOR : isH2 ? SECONDARY_COLOR : DARK_TEXT,
-        font: "Calibri",
-      }),
-    ],
+function createCell(children, options = {}) {
+  const borders = options.borders || {
+    top: BORDER_BLACK,
+    bottom: BORDER_BLACK,
+    left: BORDER_BLACK,
+    right: BORDER_BLACK,
+  };
+
+  return new TableCell({
+    width: options.width ? { size: options.width, type: WidthType.PERCENTAGE } : undefined,
+    columnSpan: options.columnSpan || 1,
+    margins: {
+      top: options.padY || 80,
+      bottom: options.padY || 80,
+      left: options.padX || 120,
+      right: options.padX || 120,
+    },
+    borders,
+    children: Array.isArray(children) ? children : [children],
   });
 }
 
-function createParagraph(text, options = {}) {
+function createTextPara(text, options = {}) {
   return new Paragraph({
-    spacing: { before: options.before || 60, after: options.after || 80 },
     alignment: options.alignment || AlignmentType.LEFT,
+    spacing: { before: options.before || 30, after: options.after || 30 },
     children: [
       new TextRun({
         text,
-        size: options.size || 22,
-        color: options.color || DARK_TEXT,
         bold: Boolean(options.bold),
         italics: Boolean(options.italics),
-        font: "Calibri",
+        size: options.size || 20, // 10pt = 20 half-points
+        font: options.font || "Calibri",
+        color: options.color || "000000",
       }),
     ],
   });
 }
 
-function createBullet(text, boldPrefix = "") {
+function createCodePara(codeText) {
   return new Paragraph({
-    bullet: { level: 0 },
-    spacing: { before: 40, after: 40 },
+    spacing: { before: 10, after: 10 },
     children: [
-      ...(boldPrefix
-        ? [
-            new TextRun({
-              text: boldPrefix + " ",
-              bold: true,
-              size: 22,
-              color: PRIMARY_COLOR,
-              font: "Calibri",
-            }),
-          ]
-        : []),
       new TextRun({
-        text,
-        size: 22,
-        color: DARK_TEXT,
-        font: "Calibri",
+        text: codeText,
+        size: 17, // ~8.5pt
+        font: "Consolas",
+        color: "0F172A",
       }),
     ],
   });
 }
 
-function createCodeBlock(codeLines) {
-  return codeLines.map(
-    (line) =>
-      new Paragraph({
-        spacing: { before: 20, after: 20 },
-        children: [
-          new TextRun({
-            text: line,
-            font: "Consolas",
-            size: 19,
-            color: "0F172A",
-          }),
-        ],
-      })
-  );
+function createImageFigure(imgFilename, captionText, widthPt = 520, heightPt = 300) {
+  const imgPath = path.join(FIGURES_DIR, imgFilename);
+  const imgBuffer = fs.readFileSync(imgPath);
+
+  return [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 100, after: 60 },
+      children: [
+        new ImageRun({
+          data: imgBuffer,
+          transformation: {
+            width: widthPt,
+            height: heightPt,
+          },
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 40, after: 140 },
+      children: [
+        new TextRun({
+          text: captionText,
+          size: 19,
+          italics: true,
+          bold: true,
+          font: "Calibri",
+          color: "1E293B",
+        }),
+      ],
+    }),
+  ];
 }
 
-function createTableCell(content, isHeader = false, widthPercent = 25) {
-  return new TableCell({
-    width: { size: widthPercent, type: WidthType.PERCENTAGE },
-    shading: {
-      type: ShadingType.CLEAR,
-      fill: isHeader ? "E2E8F0" : "FFFFFF",
-    },
-    margins: { top: 120, bottom: 120, left: 140, right: 140 },
-    children: [
-      new Paragraph({
-        alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
-        children: [
-          new TextRun({
-            text: content,
-            bold: isHeader,
-            size: isHeader ? 21 : 20,
-            color: isHeader ? PRIMARY_COLOR : DARK_TEXT,
-            font: "Calibri",
-          }),
-        ],
-      }),
-    ],
-  });
-}
-
-async function generateDocx() {
+async function buildSubmissionDoc() {
   const doc = new Document({
     sections: [
       {
         properties: {
           page: {
-            margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 },
+            margin: { top: 1000, bottom: 1000, left: 1100, right: 1100 },
           },
         },
+        headers: {
+          default: new Header({
+            children: [
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: BORDER_NONE,
+                  bottom: BORDER_NONE,
+                  left: BORDER_NONE,
+                  right: BORDER_NONE,
+                  insideHorizontal: BORDER_NONE,
+                  insideVertical: BORDER_NONE,
+                },
+                rows: [
+                  new TableRow({
+                    children: [
+                      new TableCell({
+                        width: { size: 70, type: WidthType.PERCENTAGE },
+                        borders: { top: BORDER_NONE, bottom: BORDER_NONE, left: BORDER_NONE, right: BORDER_NONE },
+                        children: [
+                          createTextPara("ITUE301: Advanced Web Development Frameworks", { bold: true, size: 20 }),
+                        ],
+                      }),
+                      new TableCell({
+                        width: { size: 30, type: WidthType.PERCENTAGE },
+                        borders: { top: BORDER_NONE, bottom: BORDER_NONE, left: BORDER_NONE, right: BORDER_NONE },
+                        children: [
+                          createTextPara("24CS095", { bold: true, size: 20, alignment: AlignmentType.RIGHT }),
+                        ],
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: BORDER_MAROON,
+                  bottom: BORDER_NONE,
+                  left: BORDER_NONE,
+                  right: BORDER_NONE,
+                  insideHorizontal: BORDER_NONE,
+                  insideVertical: BORDER_NONE,
+                },
+                rows: [
+                  new TableRow({
+                    children: [
+                      new TableCell({
+                        width: { size: 80, type: WidthType.PERCENTAGE },
+                        borders: { top: BORDER_MAROON, bottom: BORDER_NONE, left: BORDER_NONE, right: BORDER_NONE },
+                        children: [
+                          createTextPara("Department of Computer Science and Engineering, CSPIT", { size: 19 }),
+                        ],
+                      }),
+                      new TableCell({
+                        width: { size: 20, type: WidthType.PERCENTAGE },
+                        borders: { top: BORDER_MAROON, bottom: BORDER_NONE, left: BORDER_NONE, right: BORDER_NONE },
+                        children: [
+                          new Paragraph({
+                            alignment: AlignmentType.RIGHT,
+                            children: [
+                              new TextRun({ text: "Page ", size: 19, font: "Calibri" }),
+                              new TextRun({ children: [PageNumber.CURRENT], size: 19, font: "Calibri" }),
+                            ],
+                          }),
+                        ],
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
         children: [
-          // Header / University Title
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 100, after: 40 },
-            children: [
-              new TextRun({
-                text: "CHAROTAR UNIVERSITY OF SCIENCE AND TECHNOLOGY",
-                bold: true,
-                size: 32,
-                color: PRIMARY_COLOR,
-                font: "Calibri",
-              }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 40 },
-            children: [
-              new TextRun({
-                text: "Chandubhai S. Patel Institute of Technology (CSPIT)",
-                size: 24,
-                color: MUTED_TEXT,
-                font: "Calibri",
-              }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 120 },
-            children: [
-              new TextRun({
-                text: "Department of Information Technology",
-                size: 22,
-                color: MUTED_TEXT,
-                italics: true,
-                font: "Calibri",
-              }),
-            ],
-          }),
-
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 100, after: 200 },
-            children: [
-              new TextRun({
-                text: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                color: SECONDARY_COLOR,
-                size: 20,
-              }),
-            ],
-          }),
-
-          // Practical Title Box
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 60, after: 60 },
-            children: [
-              new TextRun({
-                text: "PRACTICAL 6: FULL STACK INTEGRATION",
-                bold: true,
-                size: 36,
-                color: PRIMARY_COLOR,
-                font: "Calibri",
-              }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 160 },
-            children: [
-              new TextRun({
-                text: "React + Express + Node.js + MongoDB End-to-End CRUD Application",
-                size: 24,
-                color: SECONDARY_COLOR,
-                bold: true,
-                font: "Calibri",
-              }),
-            ],
-          }),
-
-          // Student Details Table
+          // 1. Top Student Header Table
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
+            borders: {
+              top: BORDER_BLACK,
+              bottom: BORDER_BLACK,
+              left: BORDER_BLACK,
+              right: BORDER_BLACK,
+              insideHorizontal: BORDER_BLACK,
+              insideVertical: BORDER_BLACK,
+            },
             rows: [
               new TableRow({
                 children: [
-                  createTableCell("Course Code & Title", true, 35),
-                  createTableCell("ITUE301 — Advanced Web Development Frameworks", false, 65),
+                  createCell(createTextPara("Student ID :", { bold: true }), { width: 22 }),
+                  createCell(createTextPara("24CS095", { bold: true }), { width: 28 }),
+                  createCell(createTextPara("Student Name:", { bold: true }), { width: 22 }),
+                  createCell(createTextPara("Ansh Sojitra", { bold: true }), { columnSpan: 3, width: 28 }),
                 ],
               }),
               new TableRow({
                 children: [
-                  createTableCell("Academic Year", true, 35),
-                  createTableCell("2026–2027", false, 65),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Student Name", true, 35),
-                  createTableCell("Ansh Sojitra", false, 65),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Student ID", true, 35),
-                  createTableCell("24CS095", false, 65),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Date of Submission", true, 35),
-                  createTableCell("October 24, 2026", false, 65),
+                  createCell(
+                    [
+                      createTextPara("Subject code &", { bold: true }),
+                      createTextPara("Name :", { bold: true }),
+                    ],
+                    { width: 22 }
+                  ),
+                  createCell(
+                    [
+                      createTextPara("ITUE301: Advanced Web", { bold: true }),
+                      createTextPara("Development", { bold: true }),
+                      createTextPara("Frameworks", { bold: true }),
+                    ],
+                    { width: 28 }
+                  ),
+                  createCell(createTextPara("Practical :", { bold: true }), { width: 14 }),
+                  createCell(createTextPara("6", { bold: true, alignment: AlignmentType.CENTER }), { width: 8 }),
+                  createCell(createTextPara("Academic Year :", { bold: true }), { width: 18 }),
+                  createCell(createTextPara("2026-27", { bold: true }), { width: 10 }),
                 ],
               }),
             ],
           }),
 
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 200, after: 200 },
-            children: [
-              new TextRun({
-                text: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                color: SECONDARY_COLOR,
-                size: 20,
-              }),
-            ],
-          }),
+          // Vertical spacing
+          new Paragraph({ spacing: { before: 120, after: 60 }, children: [] }),
 
-          // 1. Objective
-          createHeading("1. Objective", HeadingLevel.HEADING_1),
-          createParagraph(
-            "The objective of Practical 6 is to seamlessly integrate a modern React task-management user interface (developed in Practicals 1–3) with an Express and Mongoose RESTful backend API (developed in Practicals 4–5). The integration delivers full end-to-end CRUD functionality (Create, Read, Update, Delete) with state synchronization, MongoDB persistence, comprehensive error and loading state management, modal safety confirmations, and responsive UI design."
-          ),
-
-          // 2. System Architecture & Prerequisites
-          createHeading("2. System Architecture & Prerequisites", HeadingLevel.HEADING_1),
-          createParagraph(
-            "The project is structured as a unified monorepo comprising a backend Express service and a frontend React Vite application connected to a persistent MongoDB database engine:"
-          ),
-          createBullet("React 19, Vite 8, React Router DOM 7, Vanilla CSS design tokens.", "Frontend:"),
-          createBullet("Node.js v18+, Express 5, Mongoose 9, CORS middleware, dotenv.", "Backend:"),
-          createBullet("MongoDB Community Server running locally on port 27017.", "Database:"),
-          createBullet("Centralized service module (taskApi.js) utilizing VITE_API_BASE_URL.", "API Integration:"),
-
-          // 3. Monorepo Directory Structure
-          createHeading("3. Monorepo Directory Structure", HeadingLevel.HEADING_1),
-          ...createCodeBlock([
-            "Prac-6/",
-            "├── .env.example                  # Root environment configuration template",
-            "├── .gitignore                    # Ensures zero credentials/node_modules/build output leak",
-            "├── package.json                  # Root runner scripts (dev:backend, dev:frontend, test)",
-            "├── README.md                     # Comprehensive documentation and acceptance checklist",
-            "├── backend/",
-            "│   ├── app.js                    # Express app pipeline, CORS, middleware, route mount",
-            "│   ├── test.js                   # 53-assertion automated integration test suite",
-            "│   ├── config/db.js              # Mongoose MongoDB connection handler",
-            "│   ├── middleware/               # Logger, validateContentType, validateTaskId, errorHandler",
-            "│   ├── models/Task.js            # Mongoose schema with enum validation & pre-save trimming",
-            "│   └── routes/tasks.js           # REST CRUD route handlers for /tasks",
-            "└── frontend/",
-            "    ├── vite.config.js            # Vite build configuration",
-            "    ├── src/api/taskApi.js        # Centralized HTTP API client with network error handling",
-            "    ├── src/components/           # TaskForm, TaskCard, ConfirmModal, Toast, Spinner, ErrorMessage",
-            "    ├── src/pages/Projects.jsx    # Full CRUD orchestration, state sync, search, filters",
-            "    └── src/App.css               # Modern, accessible, responsive styling tokens",
-          ]),
-
-          // 4. API Endpoints Specification
-          createHeading("4. REST API Specification", HeadingLevel.HEADING_1),
-          createParagraph(
-            "The backend provides standardized JSON responses with consistent structure: { success: boolean, message?: string, data?: any, errors?: string[] }."
-          ),
+          // 2. Main Box Table containing Task 6, Aim, Code, Highlights, and Outputs
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
+            borders: {
+              top: BORDER_BLACK,
+              bottom: BORDER_BLACK,
+              left: BORDER_BLACK,
+              right: BORDER_BLACK,
+              insideHorizontal: BORDER_BLACK,
+              insideVertical: BORDER_BLACK,
+            },
             rows: [
+              // Header: Task - 6
               new TableRow({
                 children: [
-                  createTableCell("HTTP Method", true, 20),
-                  createTableCell("Endpoint", true, 25),
-                  createTableCell("Description", true, 35),
-                  createTableCell("Expected Status", true, 20),
+                  createCell(
+                    createTextPara("Task - 6", {
+                      bold: true,
+                      size: 24,
+                      alignment: AlignmentType.CENTER,
+                    }),
+                    { padY: 60 }
+                  ),
                 ],
               }),
+
+              // Subheader: Aim
               new TableRow({
                 children: [
-                  createTableCell("GET", false, 20),
-                  createTableCell("/api", false, 25),
-                  createTableCell("System health, student metadata, API route dictionary", false, 35),
-                  createTableCell("200 OK", false, 20),
+                  createCell(
+                    createTextPara("Aim", {
+                      bold: true,
+                      size: 22,
+                      alignment: AlignmentType.CENTER,
+                    }),
+                    { padY: 40 }
+                  ),
                 ],
               }),
+
+              // Aim Description
               new TableRow({
                 children: [
-                  createTableCell("GET", false, 20),
-                  createTableCell("/tasks", false, 25),
-                  createTableCell("Fetch all tasks ordered newest first from MongoDB", false, 35),
-                  createTableCell("200 OK", false, 20),
+                  createCell([
+                    createTextPara(
+                      "To connect a React task-management UI to the Express/Mongoose REST API and support complete end-to-end CRUD (Create, Read, Update, Delete) operations with MongoDB persistence, state synchronization, CORS configuration, centralized API service module, delete confirmation modal, toast notifications, and robust loading and error state management.",
+                      { size: 20 }
+                    ),
+                  ]),
                 ],
               }),
+
+              // Subheader: Code
               new TableRow({
                 children: [
-                  createTableCell("GET", false, 20),
-                  createTableCell("/tasks/:id", false, 25),
-                  createTableCell("Fetch single task by valid MongoDB ObjectId", false, 35),
-                  createTableCell("200 / 400 / 404", false, 20),
+                  createCell(
+                    createTextPara("Code", {
+                      bold: true,
+                      size: 22,
+                      alignment: AlignmentType.CENTER,
+                    }),
+                    { padY: 40 }
+                  ),
                 ],
               }),
+
+              // Code & Implementation Highlights Content
               new TableRow({
                 children: [
-                  createTableCell("POST", false, 20),
-                  createTableCell("/tasks", false, 25),
-                  createTableCell("Create new task with title, description, priority", false, 35),
-                  createTableCell("201 Created / 400", false, 20),
+                  createCell([
+                    new Paragraph({
+                      spacing: { before: 20, after: 20 },
+                      children: [
+                        new TextRun({ text: "GitHub Link / Repository Link: ", bold: true, size: 20 }),
+                        new TextRun({
+                          text: "https://github.com/AnshSojitra/fullstack-task-manager-charusat-24cs095",
+                          size: 20,
+                          color: "0000EE",
+                          underline: {},
+                        }),
+                      ],
+                    }),
+                    createTextPara(
+                      "Branch: main (origin/main) | Latest commit: cb73f90fef31da85050c3471d4451a32f19c2eee | Implementation commit: 2a89960",
+                      { size: 19 }
+                    ),
+                    new Paragraph({ spacing: { before: 60, after: 20 }, children: [] }),
+
+                    createTextPara("Key Implementation Highlights:", { bold: true, size: 20 }),
+                    createTextPara("1. Monorepo structure: frontend/ (React 19 + Vite) and backend/ (Express 5 + Mongoose 9) with environment separation and root runner scripts.", { size: 19 }),
+                    createTextPara("2. Express CORS middleware: whitelists frontend development origin (http://localhost:5173) supporting all CRUD methods and preflight OPTIONS.", { size: 19 }),
+                    createTextPara("3. Central Frontend API Service: taskApi.js encapsulates fetch calls using VITE_API_BASE_URL, network error handling, and structured JSON parsing.", { size: 19 }),
+                    createTextPara("4. Full End-to-End CRUD: replaces Practical 3 GitHub repository UI with MongoDB GET /tasks, POST /tasks creation, PUT /tasks/:id updates, and DELETE /tasks/:id.", { size: 19 }),
+                    createTextPara("5. UI State Synchronization: re-fetches from MongoDB after every write operation (await fetchTasks()); never assumes client-side write succeeded.", { size: 19 }),
+                    createTextPara("6. UI States & Safety: Loading spinner, friendly empty states with filter reset, title validation, ConfirmModal for destructive deletions, and auto-dismissing Toast alerts.", { size: 19 }),
+                    createTextPara("7. Automated Integration Tests & Build: 53/53 assertions passed (backend/test.js), clean ESLint pass, and optimized production Vite bundle build.", { size: 19 }),
+
+                    new Paragraph({ spacing: { before: 60, after: 20 }, children: [] }),
+
+                    // Code Snippets
+                    createCodePara("// backend/app.js - CORS Configuration & Middleware Pipeline"),
+                    createCodePara("const allowedOrigins = ["),
+                    createCodePara("  process.env.CLIENT_URL || 'http://localhost:5173',"),
+                    createCodePara("  'http://localhost:5173',"),
+                    createCodePara("  'http://127.0.0.1:5173'"),
+                    createCodePara("];"),
+                    createCodePara("app.use(cors({"),
+                    createCodePara("  origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),"),
+                    createCodePara("  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],"),
+                    createCodePara("  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],"),
+                    createCodePara("  credentials: true"),
+                    createCodePara("}));"),
+                    createCodePara("app.use(validateContentType);"),
+                    createCodePara("app.use(express.json());"),
+                    createCodePara("app.use('/tasks', taskRoutes);"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// backend/routes/tasks.js - RESTful CRUD Endpoints with ObjectId Validation"),
+                    createCodePara("router.use('/:id', validateTaskId);"),
+                    createCodePara("router.get('/', async (req, res, next) => {"),
+                    createCodePara("  const tasks = await Task.find().sort({ createdAt: -1 });"),
+                    createCodePara("  res.status(200).json({ success: true, count: tasks.length, data: tasks });"),
+                    createCodePara("});"),
+                    createCodePara("router.post('/', async (req, res, next) => {"),
+                    createCodePara("  const newTask = new Task(req.body);"),
+                    createCodePara("  const savedTask = await newTask.save();"),
+                    createCodePara("  res.status(201).json({ success: true, message: 'Task created successfully', data: savedTask });"),
+                    createCodePara("});"),
+                    createCodePara("router.put('/:id', async (req, res, next) => {"),
+                    createCodePara("  const updatedTask = await Task.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after', runValidators: true });"),
+                    createCodePara("  res.status(200).json({ success: true, message: 'Task updated successfully', data: updatedTask });"),
+                    createCodePara("});"),
+                    createCodePara("router.delete('/:id', async (req, res, next) => {"),
+                    createCodePara("  const deletedTask = await Task.findByIdAndDelete(req.params.id);"),
+                    createCodePara("  res.status(200).json({ success: true, message: 'Task deleted successfully', data: deletedTask });"),
+                    createCodePara("});"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// backend/middleware/validateContentType.js"),
+                    createCodePara("if (['POST', 'PUT'].includes(req.method) && !req.is('application/json')) {"),
+                    createCodePara("  return res.status(400).json({ success: false, message: 'Invalid or missing Content-Type header. Expected application/json.' });"),
+                    createCodePara("}"),
+                    createCodePara("next();"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// backend/middleware/validateTaskId.js"),
+                    createCodePara("const { id } = req.params;"),
+                    createCodePara("if (!mongoose.Types.ObjectId.isValid(id)) {"),
+                    createCodePara("  return res.status(400).json({ success: false, message: `Invalid task ID format: '${id}'. Must be a 24-hex MongoDB ObjectId.` });"),
+                    createCodePara("}"),
+                    createCodePara("next();"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// backend/middleware/errorHandler.js"),
+                    createCodePara("app.use((err, req, res, next) => {"),
+                    createCodePara("  console.error(err.stack); // Logged internally on server only"),
+                    createCodePara("  res.status(err.status || 500).json({ success: false, message: err.message });"),
+                    createCodePara("});"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// frontend/src/api/taskApi.js - Centralized Frontend API Service"),
+                    createCodePara("const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';"),
+                    createCodePara("export const taskApi = {"),
+                    createCodePara("  getTasks: () => apiFetch('/tasks'),"),
+                    createCodePara("  getTaskById: (id) => apiFetch(`/tasks/${id}`),"),
+                    createCodePara("  createTask: (data) => apiFetch('/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),"),
+                    createCodePara("  updateTask: (id, data) => apiFetch(`/tasks/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),"),
+                    createCodePara("  deleteTask: (id) => apiFetch(`/tasks/${id}`, { method: 'DELETE' }),"),
+                    createCodePara("};"),
+
+                    new Paragraph({ spacing: { before: 40, after: 20 }, children: [] }),
+                    createCodePara("// frontend/src/pages/Projects.jsx - State Synchronization after writes"),
+                    createCodePara("const handleCreateTask = async (taskData) => {"),
+                    createCodePara("  setIsSubmitting(true);"),
+                    createCodePara("  try {"),
+                    createCodePara("    await taskApi.createTask(taskData);"),
+                    createCodePara("    showToast('success', `Task \"${taskData.title}\" created successfully in MongoDB!`);"),
+                    createCodePara("    await fetchTasks(); // Re-fetch from database to synchronize UI state"),
+                    createCodePara("  } catch (err) {"),
+                    createCodePara("    showToast('error', err.message || 'Failed to create task.');"),
+                    createCodePara("  } finally {"),
+                    createCodePara("    setIsSubmitting(false);"),
+                    createCodePara("  }"),
+                    createCodePara("};"),
+                  ]),
                 ],
               }),
+
+              // Subheader: Output
               new TableRow({
                 children: [
-                  createTableCell("PUT", false, 20),
-                  createTableCell("/tasks/:id", false, 25),
-                  createTableCell("Update title, description, completed, or priority", false, 35),
-                  createTableCell("200 OK / 400 / 404", false, 20),
+                  createCell(
+                    createTextPara("Output", {
+                      bold: true,
+                      size: 22,
+                      alignment: AlignmentType.CENTER,
+                    }),
+                    { padY: 40 }
+                  ),
                 ],
               }),
+
+              // Output Images and Captions
               new TableRow({
                 children: [
-                  createTableCell("DELETE", false, 20),
-                  createTableCell("/tasks/:id", false, 25),
-                  createTableCell("Permanently remove task by MongoDB ObjectId", false, 35),
-                  createTableCell("200 OK / 400 / 404", false, 20),
+                  createCell([
+                    ...createImageFigure(
+                      "fig1_server_startup.png",
+                      "Figure 1: Server Startup & Live Request Logging Middleware",
+                      500,
+                      275
+                    ),
+                    ...createImageFigure(
+                      "fig2_automated_tests.png",
+                      "Figure 2: Automated Test Suite Execution (npm test) - 53/53 Assertions Passed",
+                      500,
+                      515
+                    ),
+                    ...createImageFigure(
+                      "fig3_get_tasks.png",
+                      "Figure 3: GET /tasks - Retrieve All MongoDB Tasks (200 OK)",
+                      500,
+                      390
+                    ),
+                    ...createImageFigure(
+                      "fig4_post_tasks.png",
+                      "Figure 4: POST /tasks - Task Creation with Validation (201 Created)",
+                      500,
+                      263
+                    ),
+                    ...createImageFigure(
+                      "fig5_put_delete.png",
+                      "Figure 5: PUT /tasks/:id & DELETE /tasks/:id (200 OK)",
+                      500,
+                      350
+                    ),
+                    ...createImageFigure(
+                      "fig6_error_handling.png",
+                      "Figure 6: Post-Lab Validations & Global Error Responses (400 & 404)",
+                      500,
+                      350
+                    ),
+                    ...createImageFigure(
+                      "fig7_git_push.png",
+                      "Figure 7: Git Status, Commit Log (2a89960), and Remote Push",
+                      500,
+                      300
+                    ),
+                  ]),
                 ],
-              }),
-            ],
-          }),
-
-          // 5. Key Implementation Highlights
-          createHeading("5. Key Implementation Highlights", HeadingLevel.HEADING_1),
-
-          createHeading("5.1 Express CORS Configuration (backend/app.js)", HeadingLevel.HEADING_2),
-          createParagraph(
-            "CORS is explicitly configured to whitelist the React client development origin (`http://localhost:5173`) while allowing standard HTTP verbs and headers for preflight OPTIONS requests:"
-          ),
-          ...createCodeBlock([
-            "const allowedOrigins = [",
-            "  process.env.CLIENT_URL || 'http://localhost:5173',",
-            "  'http://localhost:5173',",
-            "  'http://127.0.0.1:5173'",
-            "];",
-            "app.use(cors({",
-            "  origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),",
-            "  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],",
-            "  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],",
-            "  credentials: true",
-            "}));",
-          ]),
-
-          createHeading("5.2 Central Frontend API Module (frontend/src/api/taskApi.js)", HeadingLevel.HEADING_2),
-          createParagraph(
-            "A centralized API client encapsulates all network communication. It leverages `import.meta.env.VITE_API_BASE_URL` so that endpoint URLs are never repeated or hardcoded throughout UI components:"
-          ),
-          ...createCodeBlock([
-            "const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';",
-            "export const taskApi = {",
-            "  getTasks: () => apiFetch('/tasks'),",
-            "  getTaskById: (id) => apiFetch(`/tasks/${id}`),",
-            "  createTask: (data) => apiFetch('/tasks', { method: 'POST', body: JSON.stringify(data) }),",
-            "  updateTask: (id, data) => apiFetch(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),",
-            "  deleteTask: (id) => apiFetch(`/tasks/${id}`, { method: 'DELETE' }),",
-            "};",
-          ]),
-
-          createHeading("5.3 State Synchronization Strategy", HeadingLevel.HEADING_2),
-          createParagraph(
-            "In enterprise web applications, client-side writes must never be assumed to have succeeded. Following every create, edit, status toggle, or delete action in `Projects.jsx`, the UI executes `await fetchTasks()` to synchronize the state directly from MongoDB, guaranteeing that persisted database values and timestamps are accurately reflected."
-          ),
-
-          createHeading("5.4 Destructive Action Safety & Feedback", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Accidental data loss is prevented through `ConfirmModal.jsx`, an accessible modal requiring user confirmation before executing `DELETE /tasks/:id`. Informative visual feedback is delivered through `Toast.jsx` for both success and error notifications."
-          ),
-
-          // 6. Testing & Acceptance Evidence
-          createHeading("6. Verification & Test Execution Results", HeadingLevel.HEADING_1),
-          createParagraph(
-            "Every component, endpoint, and build workflow was rigorously verified through automated testing, linting, build pipelines, and live integration tests:"
-          ),
-
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              new TableRow({
-                children: [
-                  createTableCell("Verification Step", true, 30),
-                  createTableCell("Command Executed", true, 30),
-                  createTableCell("Observed Result", true, 25),
-                  createTableCell("Status", true, 15),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("MongoDB Connectivity", false, 30),
-                  createTableCell("Test-NetConnection -Port 27017", false, 30),
-                  createTableCell("TcpTestSucceeded: True", false, 25),
-                  createTableCell("PASS", false, 15),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Backend Test Suite", false, 30),
-                  createTableCell("npm test (node test.js)", false, 30),
-                  createTableCell("53 Passed | 0 Failed", false, 25),
-                  createTableCell("PASS", false, 15),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Frontend Code Quality", false, 30),
-                  createTableCell("npm run lint:frontend", false, 30),
-                  createTableCell("0 errors, 0 warnings", false, 25),
-                  createTableCell("PASS", false, 15),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Production Build", false, 30),
-                  createTableCell("npm run build:frontend", false, 30),
-                  createTableCell("Built in 2.17s (dist output)", false, 25),
-                  createTableCell("PASS", false, 15),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  createTableCell("Live End-to-End CRUD", false, 30),
-                  createTableCell("Live Fetch HTTP Verification", false, 30),
-                  createTableCell("CORS OK, Full CRUD Verified", false, 25),
-                  createTableCell("PASS", false, 15),
-                ],
-              }),
-            ],
-          }),
-
-          // 7. Viva Voce Questions & Answers
-          createHeading("7. Viva Voce Questions & Model Answers", HeadingLevel.HEADING_1),
-
-          createHeading("Q1: What is Cross-Origin Resource Sharing (CORS) and why is it necessary here?", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Answer: By default, web browsers enforce the Same-Origin Policy (SOP), preventing scripts on one origin (e.g., http://localhost:5173) from making requests to another origin (e.g., http://localhost:5000). Express requires CORS middleware to set the 'Access-Control-Allow-Origin' header to permit the frontend to communicate with the REST API. Without CORS, the browser blocks responses to fetch requests.",
-            { italics: true }
-          ),
-
-          createHeading("Q2: Why do we re-fetch tasks from the backend instead of updating state locally?", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Answer: Local state updates ('optimistic updates') can cause state desynchronization if validation hooks, server timestamps, database triggers, or network errors alter the stored document. Re-fetching via `await fetchTasks()` guarantees that client UI state strictly mirrors the single source of truth—the MongoDB database.",
-            { italics: true }
-          ),
-
-          createHeading("Q3: What role does VITE_API_BASE_URL play in production vs development?", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Answer: Hardcoding 'http://localhost:5000' breaks when deploying the application to staging or production servers. By abstracting the endpoint behind `import.meta.env.VITE_API_BASE_URL`, we can switch targets across environments simply by updating `.env` files without modifying any JavaScript component code.",
-            { italics: true }
-          ),
-
-          createHeading("Q4: How does Mongoose validate data before writing to MongoDB?", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Answer: Mongoose uses schema definitions to enforce data types, required constraints (e.g., title is required), string setters (trimming whitespace), and enum constraints (e.g., priority must be 'low', 'medium', or 'high'). If invalid data is passed, Mongoose throws a ValidationError, which is caught and transformed by our global errorHandler middleware into clean HTTP 400 Bad Request JSON.",
-            { italics: true }
-          ),
-
-          createHeading("Q5: How does the application handle network failures when the backend is offline?", HeadingLevel.HEADING_2),
-          createParagraph(
-            "Answer: The `taskApi.js` module catches standard fetch `TypeError` exceptions and throws a descriptive network error. The `Projects.jsx` page captures this error and displays an accessible `ErrorMessage` banner with a 'Retry' button, while the navbar displays a 'Server Offline' indicator.",
-            { italics: true }
-          ),
-
-          // 8. Conclusion
-          createHeading("8. Conclusion", HeadingLevel.HEADING_1),
-          createParagraph(
-            "Practical 6 successfully demonstrates full-stack integration of a modern React 19 single-page application with an Express 5 and Mongoose 9 REST API. The solution satisfies all academic criteria including secure environment configuration, CORS enforcement, seamless state synchronization, MongoDB persistence, comprehensive test coverage (53/53 tests passed), clean build output, and a polished user interface."
-          ),
-
-          new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            spacing: { before: 200, after: 100 },
-            children: [
-              new TextRun({
-                text: "Student Signature: _______________________",
-                bold: true,
-                size: 22,
-                color: PRIMARY_COLOR,
-                font: "Calibri",
-              }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            spacing: { before: 20, after: 100 },
-            children: [
-              new TextRun({
-                text: "Ansh Sojitra (24CS095)",
-                size: 20,
-                color: MUTED_TEXT,
-                font: "Calibri",
               }),
             ],
           }),
@@ -549,9 +509,17 @@ async function generateDocx() {
   });
 
   const buffer = await Packer.toBuffer(doc);
-  const outputPath = path.resolve(__dirname, "..", "Practical_6_Submission_24CS095.docx");
-  fs.writeFileSync(outputPath, buffer);
-  console.log(`Document successfully generated at: ${outputPath}`);
+  const outPathFinal = path.resolve(__dirname, "..", "Practical_6_Submission_24CS095_Final.docx");
+  fs.writeFileSync(outPathFinal, buffer);
+  console.log(`Word Document generated successfully at: ${outPathFinal}`);
+
+  const outPathMain = path.resolve(__dirname, "..", "Practical_6_Submission_24CS095.docx");
+  try {
+    fs.writeFileSync(outPathMain, buffer);
+    console.log(`Word Document also updated at: ${outPathMain}`);
+  } catch (err) {
+    console.log(`Note: ${outPathMain} is currently open in Word. Created ${outPathFinal} instead.`);
+  }
 }
 
-generateDocx().catch(console.error);
+buildSubmissionDoc().catch(console.error);
