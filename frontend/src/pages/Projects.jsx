@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import taskApi, { authStorage, onUnauthorized } from "../api/taskApi";
 import TaskCard from "../components/TaskCard";
 import TaskForm from "../components/TaskForm";
@@ -6,19 +6,29 @@ import Spinner from "../components/Spinner";
 import ErrorMessage from "../components/ErrorMessage";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
-import AuthModal from "../components/AuthModal";
 import Navbar from "../components/Navbar";
 
+// Lazy-loaded heavy components (loaded on-demand only when opened)
+const AuthModal = lazy(() => import("../components/AuthModal"));
+const TaskAnalyticsModal = lazy(() => import("../components/TaskAnalyticsModal"));
+
 /**
- * Main Projects / Task Management Page with JWT Authentication
- * Practical 7: Authentication and Middleware Pipeline
- * CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ * Main Projects / Task Management Page with JWT Authentication & Performance Optimizations
+ * Practical 8: Performance Optimization and Lazy Loading in React
+ * Student: Ansh Sojitra | Student ID: 24CS095 | CHARUSAT ITUE301
+ *
+ * Optimizations Applied:
+ * 1. Component-level Lazy Loading with React.lazy() and Suspense for AuthModal & TaskAnalyticsModal.
+ * 2. Stable function references using useCallback to prevent unnecessary child re-renders.
+ * 3. Memoized filtering and statistical calculations using useMemo.
+ * 4. React.memo on child components (TaskCard, Navbar, TaskForm).
  */
 function Projects() {
   const [currentUser, setCurrentUser] = useState(() => authStorage.getUser());
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState("login");
   const [authAlertMessage, setAuthAlertMessage] = useState("");
+  const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
 
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(() => Boolean(authStorage.getUser()));
@@ -114,7 +124,6 @@ function Projects() {
       })
       .catch((err) => {
         if (!ignore) {
-          console.error("Failed to load user tasks:", err);
           if (err.status !== 401) {
             setError(err.message || "Failed to fetch tasks from server.");
           }
@@ -130,150 +139,201 @@ function Projects() {
   /**
    * Handle user login/registration success
    */
-  const handleAuthSuccess = (user, mode) => {
-    setCurrentUser(user);
-    setAuthAlertMessage("");
-    showToast(
-      "success",
-      mode === "register"
-        ? `Account created! Welcome to TaskFlow, ${user.name}.`
-        : `Signed in successfully. Welcome back, ${user.name}!`
-    );
-    fetchTasks();
-  };
+  const handleAuthSuccess = useCallback(
+    (user, mode) => {
+      setCurrentUser(user);
+      setAuthAlertMessage("");
+      showToast(
+        "success",
+        mode === "register"
+          ? `Account created! Welcome to TaskFlow, ${user.name}.`
+          : `Signed in successfully. Welcome back, ${user.name}!`
+      );
+      fetchTasks();
+    },
+    [showToast, fetchTasks]
+  );
 
   /**
    * Handle user sign out
    */
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     taskApi.logout();
     setCurrentUser(null);
     setTasks([]);
     setEditingTask(null);
+    setIsAnalyticsModalOpen(false);
     showToast("info", "You have been signed out successfully.");
-  };
+  }, [showToast]);
 
   /**
    * Open Auth Modal
    */
-  const handleOpenAuth = (mode = "login") => {
+  const handleOpenAuth = useCallback((mode = "login") => {
     setAuthModalMode(mode);
     setAuthAlertMessage("");
     setIsAuthModalOpen(true);
-  };
+  }, []);
+
+  /**
+   * Open Analytics Modal
+   */
+  const handleOpenAnalytics = useCallback(() => {
+    setIsAnalyticsModalOpen(true);
+  }, []);
 
   /**
    * Handle Create Task
    */
-  const handleCreateTask = async (taskData) => {
-    if (!currentUser) {
-      handleOpenAuth("login");
-      return;
-    }
+  const handleCreateTask = useCallback(
+    async (taskData) => {
+      if (!currentUser) {
+        handleOpenAuth("login");
+        return;
+      }
 
-    setIsSubmitting(true);
-    try {
-      await taskApi.createTask(taskData);
-      showToast("success", `Task "${taskData.title}" created successfully in your private vault!`);
-      await fetchTasks();
-    } catch (err) {
-      console.error("Task creation failed:", err);
-      showToast("error", err.message || "Failed to create task.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      setIsSubmitting(true);
+      try {
+        await taskApi.createTask(taskData);
+        showToast("success", `Task "${taskData.title}" created successfully in your private vault!`);
+        fetchTasks();
+      } catch (err) {
+        showToast("error", err.message || "Failed to create task.");
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [currentUser, handleOpenAuth, showToast, fetchTasks]
+  );
 
   /**
    * Handle Update Task
    */
-  const handleUpdateTask = async (taskData) => {
-    if (!editingTask?._id) return;
-    setIsSubmitting(true);
-    try {
-      await taskApi.updateTask(editingTask._id, taskData);
-      showToast("success", `Task "${taskData.title}" updated successfully!`);
-      setEditingTask(null);
-      await fetchTasks();
-    } catch (err) {
-      console.error("Task update failed:", err);
-      showToast("error", err.message || "Failed to update task.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const handleUpdateTask = useCallback(
+    async (taskData) => {
+      if (!editingTask?._id) return;
+      setIsSubmitting(true);
+      try {
+        await taskApi.updateTask(editingTask._id, taskData);
+        showToast("success", `Task "${taskData.title}" updated successfully!`);
+        setEditingTask(null);
+        fetchTasks();
+      } catch (err) {
+        showToast("error", err.message || "Failed to update task.");
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [editingTask, showToast, fetchTasks]
+  );
 
   /**
-   * Quick toggle task completed status
+   * Quick toggle task completed status (Memoized)
    */
-  const handleToggleStatus = async (task) => {
-    setIsActionLoading(true);
-    try {
-      const updatedStatus = !task.completed;
-      await taskApi.updateTask(task._id, { completed: updatedStatus });
-      showToast(
-        "success",
-        `Task "${task.title}" marked as ${updatedStatus ? "completed" : "pending"}.`
-      );
-      await fetchTasks();
-    } catch (err) {
-      console.error("Toggle status failed:", err);
-      showToast("error", err.message || "Failed to update status.");
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
+  const handleToggleStatus = useCallback(
+    async (task) => {
+      setIsActionLoading(true);
+      try {
+        const updatedStatus = !task.completed;
+        await taskApi.updateTask(task._id, { completed: updatedStatus });
+        showToast(
+          "success",
+          `Task "${task.title}" marked as ${updatedStatus ? "completed" : "pending"}.`
+        );
+        fetchTasks();
+      } catch (err) {
+        showToast("error", err.message || "Failed to update status.");
+      } finally {
+        setIsActionLoading(false);
+      }
+    },
+    [showToast, fetchTasks]
+  );
 
   /**
-   * Initiate Delete confirmation dialog
+   * Select task for editing (Memoized)
    */
-  const handleDeleteRequest = (task) => {
+  const handleEditTask = useCallback((task) => {
+    setEditingTask(task);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  /**
+   * Cancel task editing (Memoized)
+   */
+  const handleCancelEdit = useCallback(() => {
+    setEditingTask(null);
+  }, []);
+
+  /**
+   * Initiate Delete confirmation dialog (Memoized)
+   */
+  const handleDeleteRequest = useCallback((task) => {
     setDeleteCandidate(task);
-  };
+  }, []);
 
   /**
-   * Confirm and execute task deletion
+   * Confirm and execute task deletion (Memoized)
    */
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = useCallback(async () => {
     if (!deleteCandidate?._id) return;
     setIsDeleting(true);
     try {
       await taskApi.deleteTask(deleteCandidate._id);
       showToast("success", `Task "${deleteCandidate.title}" deleted from your task vault.`);
       setDeleteCandidate(null);
-      await fetchTasks();
+      fetchTasks();
     } catch (err) {
-      console.error("Delete task failed:", err);
       showToast("error", err.message || "Failed to delete task.");
     } finally {
       setIsDeleting(false);
     }
-  };
+  }, [deleteCandidate, showToast, fetchTasks]);
 
   /**
-   * Filter tasks by search query, completion status, and priority level
+   * Clear all search & filter criteria (Memoized)
    */
-  const filteredTasks = tasks.filter((task) => {
-    const titleMatch = (task.title || "").toLowerCase().includes(search.toLowerCase());
-    const descMatch = (task.description || "").toLowerCase().includes(search.toLowerCase());
-    const matchesSearch = titleMatch || descMatch;
+  const handleClearFilters = useCallback(() => {
+    setSearch("");
+    setStatusFilter("all");
+    setPriorityFilter("all");
+  }, []);
 
-    const matchesStatus =
-      statusFilter === "all"
-        ? true
-        : statusFilter === "completed"
-        ? Boolean(task.completed)
-        : !task.completed;
+  /**
+   * Filter tasks by search query, completion status, and priority level (Memoized)
+   */
+  const filteredTasks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tasks.filter((task) => {
+      const matchesSearch =
+        !q ||
+        (task.title || "").toLowerCase().includes(q) ||
+        (task.description || "").toLowerCase().includes(q);
 
-    const matchesPriority =
-      priorityFilter === "all" ? true : (task.priority || "medium") === priorityFilter;
+      const matchesStatus =
+        statusFilter === "all"
+          ? true
+          : statusFilter === "completed"
+          ? Boolean(task.completed)
+          : !task.completed;
 
-    return matchesSearch && matchesStatus && matchesPriority;
-  });
+      const matchesPriority =
+        priorityFilter === "all" ? true : (task.priority || "medium") === priorityFilter;
 
-  const totalTasks = tasks.length;
-  const completedCount = tasks.filter((t) => t.completed).length;
-  const pendingCount = totalTasks - completedCount;
+      return matchesSearch && matchesStatus && matchesPriority;
+    });
+  }, [tasks, search, statusFilter, priorityFilter]);
+
+  // Memoized task count statistics
+  const { totalTasks, completedCount, pendingCount } = useMemo(() => {
+    const total = tasks.length;
+    const completed = tasks.filter((t) => t.completed).length;
+    return {
+      totalTasks: total,
+      completedCount: completed,
+      pendingCount: total - completed,
+    };
+  }, [tasks]);
 
   return (
     <div className="app-layout">
@@ -282,17 +342,34 @@ function Projects() {
         user={currentUser}
         onOpenAuth={handleOpenAuth}
         onLogout={handleLogout}
+        onOpenAnalytics={handleOpenAnalytics}
       />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        initialMode={authModalMode}
-        alertMessage={authAlertMessage}
-        onClose={() => setIsAuthModalOpen(false)}
-        onAuthSuccess={handleAuthSuccess}
-      />
+      {/* Lazy-loaded AuthModal Chunk */}
+      {isAuthModalOpen && (
+        <Suspense fallback={<Spinner message="Loading authentication module chunk..." />}>
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            initialMode={authModalMode}
+            alertMessage={authAlertMessage}
+            onClose={() => setIsAuthModalOpen(false)}
+            onAuthSuccess={handleAuthSuccess}
+          />
+        </Suspense>
+      )}
+
+      {/* Lazy-loaded TaskAnalyticsModal Chunk */}
+      {isAnalyticsModalOpen && (
+        <Suspense fallback={<Spinner message="Loading task analytics module chunk..." />}>
+          <TaskAnalyticsModal
+            isOpen={isAnalyticsModalOpen}
+            tasks={tasks}
+            onClose={() => setIsAnalyticsModalOpen(false)}
+          />
+        </Suspense>
+      )}
 
       <ConfirmModal
         isOpen={Boolean(deleteCandidate)}
@@ -333,7 +410,7 @@ function Projects() {
               </div>
               <div className="auth-feature-pill">
                 <span className="pill-icon">⚡</span>
-                <span>Server-Side Middleware Pipeline</span>
+                <span>React.lazy() &amp; Suspense Optimization</span>
               </div>
             </div>
 
@@ -369,6 +446,14 @@ function Projects() {
               <div className="vault-badges">
                 <span className="badge badge-jwt">JWT Active</span>
                 <span className="badge badge-private">Private Vault</span>
+                <button
+                  type="button"
+                  className="badge badge-analytics-btn"
+                  onClick={handleOpenAnalytics}
+                  title="Open lazy-loaded Task Analytics & Profiler modal"
+                >
+                  📊 Analytics &amp; Profiler
+                </button>
               </div>
             </section>
 
@@ -386,6 +471,12 @@ function Projects() {
                 <span className="stat-label">Completed</span>
                 <span className="stat-number">{completedCount}</span>
               </div>
+              <div className="stat-card stat-action" onClick={handleOpenAnalytics} style={{ cursor: "pointer" }}>
+                <span className="stat-label">Performance &amp; Stats</span>
+                <span className="stat-number" style={{ fontSize: "16px", color: "var(--primary)" }}>
+                  View Analytics →
+                </span>
+              </div>
             </section>
 
             {/* Task Form (Create or Edit) */}
@@ -394,7 +485,7 @@ function Projects() {
                 key={editingTask?._id || "new"}
                 initialData={editingTask}
                 onSubmit={editingTask ? handleUpdateTask : handleCreateTask}
-                onCancel={editingTask ? () => setEditingTask(null) : undefined}
+                onCancel={editingTask ? handleCancelEdit : undefined}
                 isSubmitting={isSubmitting}
               />
             </section>
@@ -490,11 +581,7 @@ function Projects() {
                     <button
                       type="button"
                       className="btn btn-secondary mt-2"
-                      onClick={() => {
-                        setSearch("");
-                        setStatusFilter("all");
-                        setPriorityFilter("all");
-                      }}
+                      onClick={handleClearFilters}
                     >
                       Clear Filters
                     </button>
@@ -509,10 +596,7 @@ function Projects() {
                       key={task._id}
                       task={task}
                       onToggleStatus={handleToggleStatus}
-                      onEdit={(t) => {
-                        setEditingTask(t);
-                        window.scrollTo({ top: 0, behavior: "smooth" });
-                      }}
+                      onEdit={handleEditTask}
                       onDelete={handleDeleteRequest}
                       isActionLoading={isActionLoading}
                     />
@@ -526,10 +610,10 @@ function Projects() {
 
       <footer className="app-footer">
         <p>
-          CHARUSAT ITUE301 — Advanced Web Development Frameworks • Practical 7: Authentication & Middleware Pipeline
+          CHARUSAT ITUE301 — Advanced Web Development Frameworks • Practical 8: Performance Optimization &amp; Lazy Loading
         </p>
         <p className="footer-credits">
-          Developed by <strong>Ansh Sojitra (24CS095)</strong> • React + Express + MongoDB + JWT
+          Developed by <strong>Ansh Sojitra (24CS095)</strong> • React 19 + Vite Code Splitting + Express + MongoDB
         </p>
       </footer>
     </div>

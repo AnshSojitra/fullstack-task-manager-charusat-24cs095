@@ -1,8 +1,9 @@
 {
   "name": "fullstack-task-manager-charusat-24cs095",
   "version": "1.0.0",
-  "description": "Practical 7: Authentication and Middleware Pipeline - CHARUSAT ITUE301",
+  "description": "Practical 8: Performance Optimization and Lazy Loading in React - CHARUSAT ITUE301",
   "author": "Ansh Sojitra (24CS095)",
+  "type": "module",
   "license": "ISC",
   "scripts": {
     "dev:backend": "npm --prefix backend run dev",
@@ -11,6 +12,8 @@
     "test:backend": "npm --prefix backend test",
     "build:frontend": "npm --prefix frontend run build",
     "lint:frontend": "npm --prefix frontend run lint",
+    "preview:frontend": "npm --prefix frontend run preview",
+    "perf:measure": "node scripts/measure-performance.js",
     "test": "npm --prefix backend test"
   }
 }

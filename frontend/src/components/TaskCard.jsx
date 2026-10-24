@@ -1,8 +1,12 @@
+import React from "react";
+
 /**
  * TaskCard Component
- * Practical 6: CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ * Practical 8: Performance Optimization and Lazy Loading in React
+ * Student: Ansh Sojitra | Student ID: 24CS095 | CHARUSAT ITUE301
  *
- * Displays task details with status toggle, priority badge, and CRUD actions.
+ * Wrapped in React.memo to prevent unnecessary re-renders when parent
+ * state changes (e.g. typing in search filter) but task data remains unchanged.
  */
 function TaskCard({ task, onToggleStatus, onEdit, onDelete, isActionLoading = false }) {
   const { _id, title, description, completed, priority, createdAt } = task;
@@ -80,4 +84,5 @@ function TaskCard({ task, onToggleStatus, onEdit, onDelete, isActionLoading = fa
   );
 }
 
-export default TaskCard;
+// React.memo skips re-rendering when props (task, callbacks) haven't changed
+export default React.memo(TaskCard);

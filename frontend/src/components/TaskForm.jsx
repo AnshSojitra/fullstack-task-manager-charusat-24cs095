@@ -1,8 +1,11 @@
-import { useState } from "react";
+import React, { useState } from "react";
 
 /**
  * Task Form Component (Create and Edit Modes)
- * Practical 6: CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ * Practical 8: Performance Optimization and Lazy Loading in React
+ * Student: Ansh Sojitra | Student ID: 24CS095 | CHARUSAT ITUE301
+ *
+ * Wrapped in React.memo to avoid re-rendering when parent search/filter state updates.
  */
 function TaskForm({ initialData = null, onSubmit, onCancel, isSubmitting = false }) {
   const [title, setTitle] = useState(() => initialData?.title || "");
@@ -144,4 +147,4 @@ function TaskForm({ initialData = null, onSubmit, onCancel, isSubmitting = false
   );
 }
 
-export default TaskForm;
+export default React.memo(TaskForm);

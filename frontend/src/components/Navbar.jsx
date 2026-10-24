@@ -1,21 +1,59 @@
+import React from "react";
+import { Link, useLocation } from "react-router-dom";
+
 /**
- * Navbar Header Component with Authentication State
- * Practical 7: Authentication and Middleware Pipeline
- * CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ * Navbar Header Component with Authentication State & Navigation Links
+ * Practical 8: Performance Optimization and Lazy Loading in React
+ * Student: Ansh Sojitra | Student ID: 24CS095 | CHARUSAT ITUE301
+ *
+ * Wrapped in React.memo to prevent unnecessary re-renders when task filters
+ * or search queries change in the parent Projects component.
  */
-function Navbar({ apiStatus = "connected", user = null, onOpenAuth, onLogout }) {
+function Navbar({ apiStatus = "connected", user = null, onOpenAuth, onLogout, onOpenAnalytics }) {
+  const location = useLocation();
+
   return (
     <header className="navbar">
       <div className="navbar-container">
         <div className="navbar-brand">
-          <div className="brand-logo">📋</div>
-          <div>
-            <h1 className="brand-title">TaskFlow MERN</h1>
-            <p className="brand-subtitle">
-              CHARUSAT ITUE301 • Practical 7: Authentication & Middleware
-            </p>
-          </div>
+          <Link to="/" className="brand-link" title="TaskFlow MERN Home">
+            <div className="brand-logo">📋</div>
+            <div>
+              <h1 className="brand-title">TaskFlow MERN</h1>
+              <p className="brand-subtitle">
+                CHARUSAT ITUE301 • Practical 8: Performance Optimization &amp; Lazy Loading
+              </p>
+            </div>
+          </Link>
         </div>
+
+        {/* Navigation Links for Code-Split Routes */}
+        <nav className="navbar-nav-links" aria-label="Main Navigation">
+          <Link
+            to="/"
+            className={`nav-tab-link ${location.pathname === "/" || location.pathname === "/projects" ? "active" : ""}`}
+            title="Task Management Board (Lazy-loaded Projects Chunk)"
+          >
+            📋 Tasks
+          </Link>
+          <Link
+            to="/contact"
+            className={`nav-tab-link ${location.pathname === "/contact" ? "active" : ""}`}
+            title="Contact & Feedback (Lazy-loaded Contact Chunk)"
+          >
+            ✉ Contact
+          </Link>
+          {onOpenAnalytics && user && (
+            <button
+              type="button"
+              className="nav-tab-btn"
+              onClick={onOpenAnalytics}
+              title="Open Heavy Task Analytics Modal (Lazy-loaded on demand)"
+            >
+              📊 Analytics &amp; Profiler
+            </button>
+          )}
+        </nav>
 
         <div className="navbar-meta">
           <div className="status-badge" title="Backend Express & MongoDB connection">
@@ -77,4 +115,4 @@ function Navbar({ apiStatus = "connected", user = null, onOpenAuth, onLogout }) 
   );
 }
 
-export default Navbar;
+export default React.memo(Navbar);
