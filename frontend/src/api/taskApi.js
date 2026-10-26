@@ -281,6 +281,18 @@ export const taskApi = {
   },
 
   /**
+   * POST /api/ai/generate-description (Practical 13)
+   * Auto-generate task description and suggested priority using OpenAI/Gemini with graceful fallback
+   */
+  async generateAiDescription({ title }) {
+    return apiFetch("/api/ai/generate-description", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+  },
+
+  /**
    * GET / - Health/API info check
    */
   async checkHealth() {

@@ -113,6 +113,7 @@ app.get(["/", "/api"], (req, res) => {
       "POST /tasks": "Create a task (Invalidates user tasks cache)",
       "PUT /tasks/:id": "Update a task (Invalidates user tasks cache)",
       "DELETE /tasks/:id": "Delete a task (Invalidates user tasks cache)",
+      "POST /api/ai/generate-description": "Generate task description with OpenAI/Gemini & graceful fallback",
     },
   });
 });
@@ -128,7 +129,12 @@ app.get("/me", auth, (req, res) => {
   });
 });
 
-// 7. Mount task management routes (protected by auth middleware)
+// 7. Mount AI feature routes (Practical 13)
+const aiRoutes = require("./routes/ai");
+app.use("/api/ai", aiRoutes);
+app.use("/ai", aiRoutes);
+
+// 8. Mount task management routes (protected by auth middleware)
 app.use("/tasks", taskRoutes);
 
 // 8. 404 Handler for unknown routes (structured JSON response)

@@ -1,4 +1,4 @@
-# Full-Stack TaskFlow MERN Platform (Practicals 9–12)
+# Full-Stack TaskFlow MERN Platform (Practicals 9–13)
 
 [![Build & Test CI](https://github.com/AnshSojitra/fullstack-task-manager-charusat-24cs095/actions/workflows/ci.yml/badge.svg)](https://github.com/AnshSojitra/fullstack-task-manager-charusat-24cs095/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-20.x-339933?logo=node.js)](https://nodejs.org/)
@@ -23,6 +23,7 @@ This repository continues the enterprise TaskFlow MERN platform, progressively i
 - **Practical 10:** Asynchronous Processing with Event-Driven Architecture (Node.js EventEmitter, decoupled email notifications, and timing proof).
 - **Practical 11:** Full-Stack Containerization with Docker and Docker Compose (Multi-stage Dockerfiles, Nginx SPA runner, MongoDB persistence volume, and internal DNS).
 - **Practical 12:** CI/CD Pipeline with GitHub Actions (Automated workflow on push/PR, MongoDB service container, linting, build, and deliberate red-green failure tests).
+- **Practical 13:** AI API Integration into a Web Application (OpenAI/Gemini server-side integration, secret isolation, sliding-window rate limiting, graceful degradation fallback, human-in-the-loop editable suggestions, and responsible AI governance).
 
 ---
 
@@ -50,6 +51,7 @@ prac-9/
 │   │   ├── Task.js              # Mongoose Task schema with user tenancy
 │   │   └── User.js              # Mongoose User schema with bcryptjs hashing
 │   ├── routes/
+│   │   ├── ai.js                # Practical 13: Secure AI endpoint with rate limit & graceful degradation
 │   │   ├── auth.js              # User authentication routes (/auth/register, /auth/login, /auth/me)
 │   │   └── tasks.js             # User-scoped task CRUD with TTL caching & event dispatches
 │   ├── utils/
@@ -59,11 +61,15 @@ prac-9/
 │   ├── app.js                   # Express application entrypoint
 │   ├── package.json             # Backend dependencies & test scripts
 │   ├── test.js                  # Practical 7 base auth test suite
+│   ├── test_ai.js               # Practical 13 AI integration & fallback test suite (12 assertions)
 │   ├── test_cache.js            # Practical 9 In-memory cache test suite (26 assertions)
 │   ├── test_events.js           # Practical 10 Decoupled events test suite (19 assertions)
 │   └── test_ci.js               # Practical 12 Fast unit & schema test suite (11 assertions)
 ├── frontend/
 │   ├── src/                     # React 19 SPA with lazy loading & components
+│   │   ├── api/taskApi.js       # API client with generateAiDescription integration
+│   │   └── components/
+│   │       └── TaskForm.jsx     # AI generation button, editable suggestion, and disclaimer
 │   ├── nginx.conf               # Practical 11: Nginx web server config with SPA fallback routing
 │   ├── Dockerfile               # Practical 11: Multi-stage Vite build + Nginx Alpine runner
 │   ├── .dockerignore            # Frontend container exclusions
@@ -74,10 +80,12 @@ prac-9/
 ├── Practical-10/                # Dedicated Practical 10 submission folder
 ├── Practical-11/                # Dedicated Practical 11 submission folder
 ├── Practical-12/                # Dedicated Practical 12 submission folder
+├── Practical-13/                # Dedicated Practical 13 submission folder
 ├── Practical_9_Submission_24CS095.docx   # Word submission document for Practical 9
 ├── Practical_10_Submission_24CS095.docx  # Word submission document for Practical 10
 ├── Practical_11_Submission_24CS095.docx  # Word submission document for Practical 11
-└── Practical_12_Submission_24CS095.docx  # Word submission document for Practical 12
+├── Practical_12_Submission_24CS095.docx  # Word submission document for Practical 12
+└── Practical_13_Submission_24CS095.docx  # Word submission document for Practical 13
 ```
 
 ---
@@ -171,6 +179,48 @@ docker compose down -v
 
 ---
 
+## 🤖 Practical 13: AI API Integration into a Web Application
+
+### Architectural Flow & Data Privacy
+```
+React Frontend (Vite)
+  │ [1] User enters task title & clicks "✨ Auto-Generate with AI"
+  ▼
+Express Backend (/api/ai/generate-description)
+  │ [2] Rate Limiter checks IP window (max 10 req / 60s)
+  │ [3] Title length and character sanitization (3 - 120 chars)
+  │ [4] Secret Isolation: Reads process.env.OPENAI_API_KEY server-side ONLY
+  ▼
+OpenAI API / Gemini Cloud Service (gpt-4o-mini)
+  │ [5] Generates concise 2-sentence description & suggested priority
+  ▼
+Express Backend
+  │ [6] Success: Returns { description, suggestedPriority, fallback: false }
+  │     On Failure (401, timeout, quota): Catch block returns { description: heuristicFallback, fallback: true }
+  ▼
+React Frontend Form
+  │ [7] Loading spinner dismisses; populates editable textarea & priority
+  │ [8] User can review, edit, or overwrite before saving
+  │ [9] Displays clear Responsible AI disclaimer banner
+```
+
+### Key Technical Pillars
+1. **Server-Side Key Isolation:**
+   - The third-party AI key (`OPENAI_API_KEY`) is stored in `backend/.env` and excluded via `.gitignore`.
+   - Browser DevTools Network inspection confirms the client only communicates with the trusted local endpoint (`/api/ai/generate-description`), never directly with `api.openai.com`.
+2. **Graceful Degradation Under Failure:**
+   - External APIs are unpredictable (timeouts, outages, rate limits, credit expiration).
+   - If the AI request fails or the key is invalid, the backend does **not** crash or return HTTP 500. Instead, it catches the exception and returns a structured heuristic fallback (`fallback: true`) derived from the task title keywords, allowing task creation to proceed uninterrupted.
+3. **Sliding-Window Rate Limiting:**
+   - Per-client in-memory rate limiting throttles requests to 10 per 60-second window per IP.
+   - Mitigates unexpected API billing surges and protects backend infrastructure.
+4. **Human-in-the-Loop & Responsible AI Governance:**
+   - Suggestions are loaded into editable inputs; users retain full agency.
+   - Visible UI disclaimers state: *"✨ AI-generated suggestion. Please review and edit before saving."*
+   - Strictly prohibits sending sensitive PII or credentials to external LLMs.
+
+---
+
 ## 🧪 Testing & Verification Guide
 
 ### 1. In-Memory Caching Verification (Practical 9)
@@ -198,7 +248,14 @@ node backend/test_ci.js --deliberate-fail
 # Output: Process exits with code 1 (Red CI state)
 ```
 
-### 4. Full Monorepo Test Runner
+### 4. AI API Integration & Graceful Degradation (Practical 13)
+```bash
+cd backend
+npm run test:ai
+# Output: 12 Passed, 0 Failed (Validation, Generation, Graceful Fallback, Rate Limiting, Key Privacy)
+```
+
+### 5. Full Monorepo Test Runner
 ```bash
 # Run all backend test suites concurrently
 cd backend
@@ -214,6 +271,7 @@ Formatted in accordance with the official CHARUSAT CSE Department practical temp
 - `Practical_10_Submission_24CS095.docx` (458 KB)
 - `Practical_11_Submission_24CS095.docx` (472 KB)
 - `Practical_12_Submission_24CS095.docx` (461 KB)
+- `Practical_13_Submission_24CS095.docx` (347 KB)
 
 ---
 
@@ -223,3 +281,4 @@ Formatted in accordance with the official CHARUSAT CSE Department practical temp
 - **Academic Year:** 2026–27
 - **University:** Charotar University of Science and Technology (CHARUSAT)
 - **Institute:** Chandubhai S. Patel Institute of Technology (CSPIT)
+
