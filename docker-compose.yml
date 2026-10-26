@@ -1,0 +1,99 @@
+# =============================================================================
+# Practical 11: Containerization with Docker and Docker Compose
+# Course: CHARUSAT ITUE301 - Advanced Web Development Frameworks
+# Student: Ansh Sojitra (24CS095)
+# Full-Stack Multi-Container Setup: Frontend (React/Nginx), Backend (Express), MongoDB
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Database Service: MongoDB with Persistent Named Volume & Healthcheck
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: taskmanager-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - taskflow-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # 2. Backend Service: Express REST API with In-Memory Caching & EventEmitter
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: taskmanager-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongodb:27017/task_manager
+      - JWT_SECRET=${JWT_SECRET:-supersecret_jwt_key_charusat_24cs095_practical11}
+      - JWT_EXPIRES_IN=1h
+      - CACHE_TTL_SECONDS=60
+      - CLIENT_URL=http://localhost:3000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - taskflow-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/api').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # 3. Frontend Service: React (Vite) Production Build Served via Nginx
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser client communicates with backend through the host port 5000
+        VITE_API_BASE_URL: http://localhost:5000
+    container_name: taskmanager-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - taskflow-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# -----------------------------------------------------------------------------
+# Named Volume: Ensures database records survive container restarts and rebuilds
+# -----------------------------------------------------------------------------
+volumes:
+  mongodb_data:
+    name: taskmanager_mongodb_data
+
+# -----------------------------------------------------------------------------
+# Isolated Bridge Network: Service-to-service DNS resolution via container names
+# -----------------------------------------------------------------------------
+networks:
+  taskflow-network:
+    name: taskflow_internal_network
+    driver: bridge

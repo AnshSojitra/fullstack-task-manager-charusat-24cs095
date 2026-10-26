@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+figures/
+*.docx
+*.log
+test*.js
+generate_*.js
+generate_*.py
