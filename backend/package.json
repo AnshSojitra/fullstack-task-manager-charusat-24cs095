@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node app.js",
     "dev": "node --watch app.js",
-    "test": "node test.js"
+    "test": "node test.js && node test_cache.js && node test_events.js",
+    "test:cache": "node test_cache.js",
+    "test:events": "node test_events.js",
+    "test:ci": "node test_ci.js"
   },
   "keywords": [
     "express",

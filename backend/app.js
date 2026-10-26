@@ -10,6 +10,11 @@ const errorHandler = require("./middleware/errorHandler");
 const auth = require("./middleware/auth");
 const authRoutes = require("./routes/auth");
 const taskRoutes = require("./routes/tasks");
+const taskEmitter = require("./events/taskEmitter");
+const { initTaskEventListeners } = require("./events/taskListeners");
+
+// Initialize event listeners once at startup
+initTaskEventListeners(taskEmitter);
 
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
@@ -73,34 +78,41 @@ app.use(express.json());
 app.get(["/", "/api"], (req, res) => {
   res.status(200).json({
     success: true,
-    message: "Task Management REST API with JWT Auth & MongoDB - CHARUSAT ITUE301 Practical 7",
+    message: "Task Management REST API with In-Memory Caching & Query Optimization - CHARUSAT ITUE301",
     student: {
       name: "Ansh Sojitra",
       studentId: "24CS095",
       academicYear: "2026-27",
-      practical: "Practical 7: Authentication and Middleware Pipeline",
+      practical: "Practical 9: In-Memory Caching and Query Optimization",
     },
     database: {
       engine: "MongoDB",
       odm: "Mongoose",
       status: "Connected",
     },
+    caching: {
+      type: "In-Memory TTL Cache (MemoryCache)",
+      defaultTTL: `${process.env.CACHE_TTL_SECONDS || 60}s`,
+      keyStrategy: "user:<userId>:tasks:<queryString>",
+      invalidation: "Write-through purge on POST, PUT, DELETE",
+      diagnosticsHeader: "X-Cache (HIT / MISS), X-Response-Time",
+    },
     security: {
       auth: "JWT (JSON Web Token)",
       tokenExpiry: process.env.JWT_EXPIRES_IN || "1h",
       hashing: "bcryptjs (cost factor 10)",
-      dataIsolation: "User-scoped task CRUD operations",
+      dataIsolation: "User-scoped task CRUD operations & cache namespaces",
     },
     endpoints: {
       "POST /auth/register": "Register a new user (name, email, password)",
       "POST /auth/login": "Authenticate user and receive 1-hour JWT",
       "GET /auth/me": "Get safe profile of authenticated user (requires Bearer token)",
-      "GET /me": "Alias for /auth/me (requires Bearer token)",
-      "GET /tasks": "Retrieve all tasks belonging to authenticated user",
-      "GET /tasks/:id": "Retrieve a specific task by ObjectId (user-scoped)",
-      "POST /tasks": "Create a task associated with authenticated user",
-      "PUT /tasks/:id": "Update a task belonging to authenticated user",
-      "DELETE /tasks/:id": "Delete a task belonging to authenticated user",
+      "GET /tasks": "Retrieve all tasks (Cached with TTL, X-Cache header)",
+      "GET /tasks/:id": "Retrieve a specific task by ObjectId (Cached)",
+      "GET /tasks/cache/stats": "Diagnostic cache performance statistics",
+      "POST /tasks": "Create a task (Invalidates user tasks cache)",
+      "PUT /tasks/:id": "Update a task (Invalidates user tasks cache)",
+      "DELETE /tasks/:id": "Delete a task (Invalidates user tasks cache)",
     },
   });
 });
